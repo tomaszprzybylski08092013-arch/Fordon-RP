@@ -23,6 +23,7 @@ function ensureGuild(gid) {
   g.commandChannelId = g.commandChannelId ?? null;
   g.logChannelId = g.logChannelId ?? null;
   g.complaintChannelId = g.complaintChannelId ?? null;
+  g.praiseChannelId = g.praiseChannelId ?? null;
   g.dcCommandChannelId = g.dcCommandChannelId ?? null;
   g.dcLogChannelId = g.dcLogChannelId ?? null;
   g.unbanChannelId = g.unbanChannelId ?? null;
@@ -95,7 +96,7 @@ function hasAllowedRole(member, ids = []) {
   return member.roles.cache.some(r => arr.includes(r.id));
 }
 function isCommandVisible(member, cfg, commandName) {
-  if (commandName === 'skarga') return true;
+  if (['skarga', 'pochwala'].includes(commandName)) return true;
   if (['vc-name', 'vc-limit', 'vc-kick', 'vc-ban', 'vc-close'].includes(commandName)) return true;
   if (member.permissions?.has(PermissionFlagsBits.Administrator)) return true;
   const hasOff = member.roles.cache?.some(r => cfg.visibilityOffRoleIds.includes(r.id));
@@ -148,6 +149,14 @@ const commands = [
     { name: 'kto', description: 'Kto daje', type: 3, required: true },
     { name: 'komu', description: 'Na kogo', type: 3, required: true },
     { name: 'powod', description: 'Za co', type: 3, required: true }
+  ]},
+  { name: 'pochwalakanal', description: 'Ustaw kanał na pochwały', default_member_permissions: PermissionFlagsBits.Administrator.toString(), options: [
+    { name: 'kanal', description: 'Kanał pochwał', type: 7, required: true }
+  ]},
+  { name: 'pochwala', description: 'Dodaj pochwałę', options: [
+    { name: 'kto', description: 'Kto daje', type: 3, required: true },
+    { name: 'komu', description: 'Komu daje', type: 3, required: true },
+    { name: 'dlaczego', description: 'Dlaczego', type: 3, required: true }
   ]},
   { name: 'karyperrmison', description: 'Dodaj/usuń rolę do ban-eh/ban-dc/mute', options: [
     { name: 'rola', description: 'Rola', type: 8, required: true },
@@ -377,6 +386,18 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
+    // kanał pochwał
+    if (interaction.commandName === 'pochwalakanal') {
+      if (!interaction.member.permissions?.has(PermissionFlagsBits.Administrator) && !hasAllowedRole(interaction.member, cfg.channelRoleIds)) {
+        await interaction.reply({ content: '⛔ Brak uprawnień do zmiany kanałów.', flags: 64 });
+        return;
+      }
+      cfg.praiseChannelId = interaction.options.getChannel('kanal', true).id;
+      saveConfig();
+      await interaction.reply({ content: `✅ Kanał pochwał: <#${cfg.praiseChannelId}>`, flags: 64 });
+      return;
+    }
+
     // kanał ban-dc
     if (interaction.commandName === 'bandckanal') {
       if (!interaction.member.permissions?.has(PermissionFlagsBits.Administrator) && !hasAllowedRole(interaction.member, cfg.channelRoleIds)) {
@@ -500,6 +521,21 @@ client.on('interactionCreate', async (interaction) => {
       const powod = interaction.options.getString('powod', true);
       const emb = new EmbedBuilder().setColor(Colors.Orange).setTitle('📝 Skarga na administrację')
         .setDescription(`**Kto daje:** ${kto}\n**Komu daje:** ${komu}\n**Za co:** ${powod}`);
+      await interaction.reply({ embeds: [emb] });
+      return;
+    }
+
+    // pochwała
+    if (interaction.commandName === 'pochwala') {
+      if (!cfg.praiseChannelId) { await interaction.reply({ content: '⚠️ Ustaw kanał pochwał: /pochwalakanal', flags: 64 }); return; }
+      if (interaction.channelId !== cfg.praiseChannelId) { await interaction.reply({ content: `🔒 Pochwały tylko w <#${cfg.praiseChannelId}>.`, flags: 64 }); return; }
+      const kto = interaction.options.getString('kto', true);
+      const komu = interaction.options.getString('komu', true);
+      const dlaczego = interaction.options.getString('dlaczego', true);
+      const emb = new EmbedBuilder()
+        .setColor(Colors.Green)
+        .setTitle('🌟 Pochwała')
+        .setDescription(`**Kto:** ${kto}\n**Komu:** ${komu}\n**Dlaczego:** ${dlaczego}`);
       await interaction.reply({ embeds: [emb] });
       return;
     }
