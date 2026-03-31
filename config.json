@@ -1,0 +1,74 @@
+{
+  "1480541127512948931": {
+    "commandChannelId": "1488423671428153476",
+    "logChannelId": "1488423090626105355",
+    "complaintChannelId": "1488429071775039508",
+    "configRoleIds": [
+      "1480543419674656932"
+    ],
+    "banRoleIds": [
+      "1480543419674656932"
+    ],
+    "dcCommandChannelId": "1488423671428153476",
+    "dcLogChannelId": "1488432373774422107",
+    "banRecords": [
+      {
+        "id": "BAN-X7952Q",
+        "type": "ban",
+        "userId": "1464961650330173524",
+        "reason": "test",
+        "duration": "Na zawsze",
+        "moderator": "<@1378291577973379117>",
+        "ts": 1774962973124
+      },
+      {
+        "id": "MUTE-Y4TMB2",
+        "type": "mute",
+        "userId": "1464961650330173524",
+        "reason": "xd",
+        "duration": "1m",
+        "moderator": "<@1378291577973379117>",
+        "until": "wtorek, 31 marca 2026 15:15",
+        "ts": 1774962853540
+      },
+      {
+        "id": "MUTE-FED948",
+        "type": "mute",
+        "userId": "1464961650330173524",
+        "reason": "nwm",
+        "duration": "1m",
+        "moderator": "<@1378291577973379117>",
+        "until": "wtorek, 31 marca 2026 15:08",
+        "ts": 1774962432094
+      },
+      {
+        "id": "MUTE-G0C5TD",
+        "type": "mute",
+        "userId": "1464961650330173524",
+        "reason": "test",
+        "duration": "1m",
+        "moderator": "<@1378291577973379117>",
+        "until": "wtorek, 31 marca 2026 15:06",
+        "ts": 1774962333909
+      },
+      {
+        "id": "BKI-92LWP8",
+        "userId": "1355144132728848506",
+        "reason": "test",
+        "duration": "0 dni",
+        "moderator": "<@1378291577973379117>",
+        "ts": 1774940667117
+      }
+    ],
+    "channelRoleIds": [],
+    "visibilityOnRoleIds": [],
+    "visibilityOffRoleIds": [
+      "1481288197731520542",
+      "1481992886634418358"
+    ],
+    "unbanChannelId": "1488526392311283812",
+    "tempVoiceTemplateId": "1488535066404716715",
+    "unbanRoleIds": [],
+    "tempVoiceChannels": {}
+  }
+}
