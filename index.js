@@ -10,7 +10,11 @@ const { DISCORD_TOKEN, DISCORD_APP_ID, GUILD_ID } = process.env;
 if (!DISCORD_TOKEN || !DISCORD_APP_ID || !GUILD_ID) throw new Error('Brak env DISCORD_TOKEN / DISCORD_APP_ID / GUILD_ID');
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
-const CONFIG_PATH = path.join(process.cwd(), 'config.json');
+const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || process.cwd();
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
 let guildConfig = {};
 const tempChannels = new Map(); // channelId -> { ownerId, banned:Set<string> }
 
