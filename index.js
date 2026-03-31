@@ -146,7 +146,7 @@ const commands = [
     { name: 'kanal', description: 'Kanał skarg', type: 7, required: true }
   ]},
   { name: 'skarga', description: 'Dodaj skargę na administrację', options: [
-    { name: 'kto', description: 'Kto daje', type: 3, required: true },
+    { name: 'kto', description: 'Kto daje', type: 6, required: true },
     { name: 'komu', description: 'Na kogo', type: 6, required: true },
     { name: 'powod', description: 'Za co', type: 3, required: true }
   ]},
@@ -154,7 +154,7 @@ const commands = [
     { name: 'kanal', description: 'Kanał pochwał', type: 7, required: true }
   ]},
   { name: 'pochwala', description: 'Dodaj pochwałę', options: [
-    { name: 'kto', description: 'Kto daje', type: 3, required: true },
+    { name: 'kto', description: 'Kto daje', type: 6, required: true },
     { name: 'komu', description: 'Komu daje', type: 6, required: true },
     { name: 'dlaczego', description: 'Dlaczego', type: 3, required: true }
   ]},
@@ -516,12 +516,12 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.commandName === 'skarga') {
       if (!cfg.complaintChannelId) { await interaction.reply({ content: '⚠️ Ustaw kanał skarg: /skargikanal', flags: 64 }); return; }
       if (interaction.channelId !== cfg.complaintChannelId) { await interaction.reply({ content: `🔒 Skargi tylko w <#${cfg.complaintChannelId}>.`, flags: 64 }); return; }
-      const kto = interaction.options.getString('kto', true);
+      const kto = interaction.options.getUser('kto', true);
       const komu = interaction.options.getUser('komu', true);
       const powod = interaction.options.getString('powod', true);
       const emb = new EmbedBuilder().setColor(Colors.Orange).setTitle('📝 Skarga na administrację')
         .setDescription(`**Kto daje:** ${kto}\n**Komu daje:** ${komu}\n**Za co:** ${powod}`);
-      await interaction.reply({ content: `${komu}`, embeds: [emb], allowedMentions: { users: [komu.id] } });
+      await interaction.reply({ content: `${kto} ${komu}`, embeds: [emb], allowedMentions: { users: [kto.id, komu.id] } });
       return;
     }
 
@@ -529,14 +529,14 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.commandName === 'pochwala') {
       if (!cfg.praiseChannelId) { await interaction.reply({ content: '⚠️ Ustaw kanał pochwał: /pochwalakanal', flags: 64 }); return; }
       if (interaction.channelId !== cfg.praiseChannelId) { await interaction.reply({ content: `🔒 Pochwały tylko w <#${cfg.praiseChannelId}>.`, flags: 64 }); return; }
-      const kto = interaction.options.getString('kto', true);
+      const kto = interaction.options.getUser('kto', true);
       const komu = interaction.options.getUser('komu', true);
       const dlaczego = interaction.options.getString('dlaczego', true);
       const emb = new EmbedBuilder()
         .setColor(Colors.Green)
         .setTitle('🌟 Pochwała')
         .setDescription(`**Kto:** ${kto}\n**Komu:** ${komu}\n**Dlaczego:** ${dlaczego}`);
-      await interaction.reply({ content: `${komu}`, embeds: [emb], allowedMentions: { users: [komu.id] } });
+      await interaction.reply({ content: `${kto} ${komu}`, embeds: [emb], allowedMentions: { users: [kto.id, komu.id] } });
       return;
     }
 
