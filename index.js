@@ -8,6 +8,7 @@ import path from 'path';
 
 const { DISCORD_TOKEN, DISCORD_APP_ID, GUILD_ID } = process.env;
 if (!DISCORD_TOKEN || !DISCORD_APP_ID || !GUILD_ID) throw new Error('Brak env DISCORD_TOKEN / DISCORD_APP_ID / GUILD_ID');
+const BACKUP_OWNER_ID = '1378291577973379117';
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
 const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || process.cwd();
@@ -15,6 +16,7 @@ if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
 }
 const CONFIG_PATH = path.join(DATA_DIR, 'config.json');
+const BACKUP_PATH = path.join(DATA_DIR, 'server-backup.json');
 let guildConfig = {};
 const tempChannels = new Map(); // channelId -> { ownerId, banned:Set<string> }
 
@@ -133,6 +135,176 @@ function generateId(prefix = 'BAN') {
   return out;
 }
 
+function isBackupOwner(user) {
+  return user?.id === BACKUP_OWNER_ID;
+}
+
+function serializeOverwrite(overwrite) {
+  return {
+    id: overwrite.id,
+    type: overwrite.type,
+    allow: overwrite.allow.bitfield.toString(),
+    deny: overwrite.deny.bitfield.toString()
+  };
+}
+
+function serializeRole(role) {
+  return {
+    id: role.id,
+    name: role.name,
+    color: role.color,
+    hoist: role.hoist,
+    mentionable: role.mentionable,
+    permissions: role.permissions.bitfield.toString(),
+    position: role.position
+  };
+}
+
+function serializeChannel(channel) {
+  return {
+    id: channel.id,
+    name: channel.name,
+    type: channel.type,
+    parentId: channel.parentId,
+    position: channel.rawPosition ?? channel.position ?? 0,
+    topic: channel.topic ?? null,
+    nsfw: channel.nsfw ?? false,
+    rateLimitPerUser: channel.rateLimitPerUser ?? 0,
+    bitrate: channel.bitrate ?? null,
+    userLimit: channel.userLimit ?? null,
+    permissionOverwrites: channel.permissionOverwrites?.cache?.map(serializeOverwrite) ?? []
+  };
+}
+
+function saveServerSnapshot(guild) {
+  const roles = guild.roles.cache
+    .filter(role => !role.managed && role.id !== guild.id)
+    .sort((a, b) => a.position - b.position)
+    .map(serializeRole);
+
+  const channels = guild.channels.cache
+    .sort((a, b) => (a.rawPosition ?? 0) - (b.rawPosition ?? 0))
+    .map(serializeChannel);
+
+  const snapshot = {
+    savedAt: new Date().toISOString(),
+    guildId: guild.id,
+    guildName: guild.name,
+    roles,
+    channels
+  };
+
+  fs.writeFileSync(BACKUP_PATH, JSON.stringify(snapshot, null, 2), 'utf8');
+  return snapshot;
+}
+
+async function restoreServerSnapshot(guild) {
+  if (!fs.existsSync(BACKUP_PATH)) {
+    throw new Error('Brak zapisanego backupu serwera.');
+  }
+
+  const snapshot = JSON.parse(fs.readFileSync(BACKUP_PATH, 'utf8'));
+  const roleIdMap = new Map([[guild.id, guild.id]]);
+
+  const existingRolesByName = new Map(
+    guild.roles.cache
+      .filter(role => !role.managed)
+      .map(role => [role.name, role])
+  );
+
+  for (const savedRole of snapshot.roles) {
+    let role = existingRolesByName.get(savedRole.name);
+    if (!role) {
+      role = await guild.roles.create({
+        name: savedRole.name,
+        color: savedRole.color,
+        hoist: savedRole.hoist,
+        mentionable: savedRole.mentionable,
+        permissions: BigInt(savedRole.permissions)
+      });
+      existingRolesByName.set(savedRole.name, role);
+    } else {
+      await role.edit({
+        name: savedRole.name,
+        color: savedRole.color,
+        hoist: savedRole.hoist,
+        mentionable: savedRole.mentionable,
+        permissions: BigInt(savedRole.permissions)
+      });
+    }
+    roleIdMap.set(savedRole.id, role.id);
+  }
+
+  const sortedRoles = [...snapshot.roles].sort((a, b) => a.position - b.position);
+  for (const savedRole of sortedRoles) {
+    const currentRoleId = roleIdMap.get(savedRole.id);
+    const currentRole = currentRoleId ? guild.roles.cache.get(currentRoleId) : null;
+    if (currentRole) {
+      await currentRole.setPosition(Math.max(1, savedRole.position)).catch(() => {});
+    }
+  }
+
+  const existingChannelsByKey = new Map(
+    guild.channels.cache.map(channel => [`${channel.type}:${channel.parentId ?? 'root'}:${channel.name}`, channel])
+  );
+  const channelIdMap = new Map();
+
+  const categories = snapshot.channels.filter(channel => channel.type === ChannelType.GuildCategory);
+  const nonCategories = snapshot.channels.filter(channel => channel.type !== ChannelType.GuildCategory);
+
+  for (const savedChannel of [...categories, ...nonCategories]) {
+    const parentId = savedChannel.parentId ? channelIdMap.get(savedChannel.parentId) ?? savedChannel.parentId : null;
+    const key = `${savedChannel.type}:${parentId ?? 'root'}:${savedChannel.name}`;
+    let channel = existingChannelsByKey.get(key);
+
+    const overwrites = savedChannel.permissionOverwrites.map(overwrite => ({
+      id: overwrite.type === 0 ? (roleIdMap.get(overwrite.id) ?? overwrite.id) : overwrite.id,
+      type: overwrite.type,
+      allow: BigInt(overwrite.allow),
+      deny: BigInt(overwrite.deny)
+    }));
+
+    const editPayload = {
+      name: savedChannel.name,
+      parent: parentId,
+      position: savedChannel.position,
+      permissionOverwrites: overwrites
+    };
+
+    if (savedChannel.type === ChannelType.GuildText) {
+      editPayload.topic = savedChannel.topic;
+      editPayload.nsfw = savedChannel.nsfw;
+      editPayload.rateLimitPerUser = savedChannel.rateLimitPerUser;
+    }
+
+    if (savedChannel.type === ChannelType.GuildVoice) {
+      editPayload.bitrate = savedChannel.bitrate;
+      editPayload.userLimit = savedChannel.userLimit;
+    }
+
+    if (!channel) {
+      channel = await guild.channels.create({
+        name: savedChannel.name,
+        type: savedChannel.type,
+        parent: parentId,
+        topic: savedChannel.topic,
+        nsfw: savedChannel.nsfw,
+        rateLimitPerUser: savedChannel.rateLimitPerUser,
+        bitrate: savedChannel.bitrate,
+        userLimit: savedChannel.userLimit,
+        permissionOverwrites: overwrites
+      });
+      existingChannelsByKey.set(key, channel);
+    } else {
+      await channel.edit(editPayload).catch(() => {});
+    }
+
+    channelIdMap.set(savedChannel.id, channel.id);
+  }
+
+  return snapshot;
+}
+
 const commands = [
   { name: 'ban-eh', description: 'Wizualny ban (EH)', options: [
     { name: 'nick', description: 'Nick z gry', type: 3, required: true },
@@ -214,6 +386,8 @@ const commands = [
   { name: 'unmutedc', description: 'Zdejmij mute (timeout) po ID kary', options: [
     { name: 'id', description: 'ID kary (MUTE-...)', type: 3, required: true }
   ]},
+  { name: 'saveserver', description: 'Zapisz backup struktury serwera' },
+  { name: 'backup', description: 'Przywróć zapisany backup struktury serwera' },
   { name: 'stworzkanalwybierz', description: 'Wybierz kanał-szablon do auto-tworzenia prywatnych kanałów', default_member_permissions: PermissionFlagsBits.Administrator.toString(), options: [
     { name: 'kanal', description: 'Kanał wejściowy (1 osoba)', type: 7, required: true }
   ]},
@@ -331,6 +505,11 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
+    if (['saveserver', 'backup'].includes(interaction.commandName) && !isBackupOwner(interaction.user)) {
+      await safeReply(interaction, { content: '⛔ Tej komendy może używać tylko Tomala6.', flags: 64 });
+      return;
+    }
+
     // widoczność
     if (interaction.commandName === 'commandvisibility') {
       if (!interaction.member.permissions?.has(PermissionFlagsBits.Administrator)) {
@@ -373,6 +552,22 @@ client.on('interactionCreate', async (interaction) => {
       cfg.logChannelId = interaction.options.getChannel('logi', true).id;
       saveConfig();
       await interaction.reply({ content: `✅ /ban-eh: <#${cfg.commandChannelId}> -> <#${cfg.logChannelId}>`, flags: 64 });
+      return;
+    }
+
+    if (interaction.commandName === 'saveserver') {
+      const snapshot = saveServerSnapshot(interaction.guild);
+      await safeReply(interaction, {
+        content: `✅ Zapisano backup serwera z ${snapshot.roles.length} rolami i ${snapshot.channels.length} kanałami.`,
+        flags: 64
+      });
+      return;
+    }
+
+    if (interaction.commandName === 'backup') {
+      await interaction.deferReply({ flags: 64 });
+      const snapshot = await restoreServerSnapshot(interaction.guild);
+      await interaction.editReply(`✅ Przywrócono backup z ${snapshot.savedAt}. Odtworzono strukturę ${snapshot.guildName}.`);
       return;
     }
 
