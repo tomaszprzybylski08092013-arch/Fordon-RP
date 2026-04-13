@@ -348,9 +348,6 @@ const commands = [
     { name: 'komendy', description: 'Kanał komendy', type: 7, required: true },
     { name: 'logi', description: 'Kanał logów', type: 7, required: true }
   ]},
-  { name: 'logikarchannel', description: 'Ustaw wspólny kanał logów kar EH i Discord', default_member_permissions: PermissionFlagsBits.Administrator.toString(), options: [
-    { name: 'kanal', description: 'Kanał logów kar', type: 7, required: true }
-  ]},
   { name: 'ban-dc', description: 'Ban DC + ID kary', options: [
     { name: 'uzytkownik', description: 'Kogo banujesz', type: 6, required: true },
     { name: 'reason', description: 'Powód', type: 3, required: true },
@@ -608,20 +605,6 @@ client.on('interactionCreate', async (interaction) => {
       cfg.dcLogChannelId = interaction.options.getChannel('logi', true).id;
       saveConfig();
       await interaction.reply({ content: `✅ /ban-dc: <#${cfg.dcCommandChannelId}> -> <#${cfg.dcLogChannelId}>`, flags: 64 });
-      return;
-    }
-
-    // wspólny kanał logów kar
-    if (interaction.commandName === 'logikarchannel') {
-      if (!interaction.member.permissions?.has(PermissionFlagsBits.Administrator) && !hasAllowedRole(interaction.member, cfg.channelRoleIds)) {
-        await interaction.reply({ content: '⛔ Brak uprawnień do zmiany kanałów.', flags: 64 });
-        return;
-      }
-      const channelId = interaction.options.getChannel('kanal', true).id;
-      cfg.logChannelId = channelId;
-      cfg.dcLogChannelId = channelId;
-      saveConfig();
-      await interaction.reply({ content: `✅ Wspólny kanał logów kar ustawiony na <#${channelId}>.`, flags: 64 });
       return;
     }
 
