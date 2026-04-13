@@ -399,7 +399,7 @@ const commands = [
       choices: [{ name: 'dodaj', value: 'add' }, { name: 'usuń', value: 'remove' }] }
   ]},
   { name: 'unkaryperrmisionlist', description: 'Lista ról do unban/unmute' },
-  { name: 'bandckanal', description: 'Kanały dla ban-dc', options: [
+  { name: 'karydckanal', description: 'Kanały dla ban-dc', options: [
     { name: 'komendy', description: 'Kanał komendy', type: 7, required: true },
     { name: 'logi', description: 'Kanał logów', type: 7, required: true }
   ]},
@@ -677,7 +677,7 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // kanał ban-dc
-    if (interaction.commandName === 'bandckanal') {
+    if (interaction.commandName === 'karydckanal') {
       if (!interaction.member.permissions?.has(PermissionFlagsBits.Administrator) && !hasAllowedRole(interaction.member, cfg.channelRoleIds)) {
         await interaction.reply({ content: '⛔ Brak uprawnień do zmiany kanałów.', flags: 64 });
         return;
@@ -1067,7 +1067,7 @@ client.on('interactionCreate', async (interaction) => {
 
     // ban-dc
     if (interaction.commandName === 'ban-dc') {
-      if (!cfg.dcCommandChannelId || !cfg.dcLogChannelId) { await interaction.reply({ content: '⚠️ Ustaw kanały: /bandckanal', flags: 64 }); return; }
+      if (!cfg.dcCommandChannelId || !cfg.dcLogChannelId) { await interaction.reply({ content: '⚠️ Ustaw kanały: /karydckanal', flags: 64 }); return; }
       if (interaction.channelId !== cfg.dcCommandChannelId) { await interaction.reply({ content: `🔒 /ban-dc tylko w <#${cfg.dcCommandChannelId}>.`, flags: 64 }); return; }
       if (!hasAllowedRole(interaction.member, cfg.banRoleIds)) { await interaction.reply({ content: '⛔ Brak uprawnień do /ban-dc.', flags: 64 }); return; }
       const targetUser = interaction.options.getUser('uzytkownik', true);
@@ -1096,7 +1096,7 @@ client.on('interactionCreate', async (interaction) => {
 
     // mute
     if (interaction.commandName === 'mute') {
-      if (!cfg.dcCommandChannelId || !cfg.dcLogChannelId) { await interaction.reply({ content: '⚠️ Ustaw kanały: /bandckanal', flags: 64 }); return; }
+      if (!cfg.dcCommandChannelId || !cfg.dcLogChannelId) { await interaction.reply({ content: '⚠️ Ustaw kanały: /karydckanal', flags: 64 }); return; }
       if (interaction.channelId !== cfg.dcCommandChannelId) { await interaction.reply({ content: `🔒 /mute tylko w <#${cfg.dcCommandChannelId}>.`, flags: 64 }); return; }
       if (!hasAllowedRole(interaction.member, cfg.banRoleIds)) { await interaction.reply({ content: '⛔ Brak uprawnień do /mute.', flags: 64 }); return; }
       const targetUser = interaction.options.getUser('uzytkownik', true);
