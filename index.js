@@ -42,6 +42,8 @@ function ensureGuild(gid) {
   g.unbanRoleIds = Array.isArray(g.unbanRoleIds) ? g.unbanRoleIds : [];
   g.blacklistRoleIds = Array.isArray(g.blacklistRoleIds) ? g.blacklistRoleIds : [];
   g.blacklistUserIds = Array.isArray(g.blacklistUserIds) ? g.blacklistUserIds : [];
+  g.unblacklistRoleIds = Array.isArray(g.unblacklistRoleIds) ? g.unblacklistRoleIds : [];
+  g.unblacklistUserIds = Array.isArray(g.unblacklistUserIds) ? g.unblacklistUserIds : [];
   g.clearMessageRoleIds = Array.isArray(g.clearMessageRoleIds) ? g.clearMessageRoleIds : [];
   g.clearMessageUserIds = Array.isArray(g.clearMessageUserIds) ? g.clearMessageUserIds : [];
   g.visibilityOnRoleIds = Array.isArray(g.visibilityOnRoleIds) ? g.visibilityOnRoleIds : [];
@@ -148,6 +150,29 @@ function updatePermissionEntries(ids, entityId, action) {
 }
 function isSupportedTextChannel(channel) {
   return !!channel && typeof channel.isTextBased === 'function' && channel.isTextBased();
+}
+function getBlacklistLookup(interaction, userOptionName = 'uzytkownik', idOptionName = 'id') {
+  const user = interaction.options.getUser(userOptionName);
+  const rawInput = (interaction.options.getString(idOptionName) || '').trim();
+  const parsedUserId = user?.id ?? parseDiscordUserId(rawInput);
+  return {
+    userId: parsedUserId ?? null,
+    mention: parsedUserId ? `<@${parsedUserId}>` : null,
+    recordId: rawInput && !parsedUserId ? rawInput.toUpperCase() : null
+  };
+}
+function isActiveBlacklistRecord(record) {
+  return record?.type === 'blacklist' && record.active !== false;
+}
+function findActiveBlacklistRecord(cfg, lookup) {
+  if (!cfg?.banRecords?.length) return null;
+  if (lookup?.recordId) {
+    return cfg.banRecords.find(record => record.id?.toUpperCase() === lookup.recordId && isActiveBlacklistRecord(record)) ?? null;
+  }
+  if (lookup?.userId) {
+    return cfg.banRecords.find(record => record.userId === lookup.userId && isActiveBlacklistRecord(record)) ?? null;
+  }
+  return null;
 }
 function isCommandVisible(member, cfg, commandName) {
   if (['skarga', 'pochwala'].includes(commandName)) return true;
@@ -413,10 +438,22 @@ const commands = [
     { name: 'rola', description: 'Rola do blacklist', type: 8, required: false },
     { name: 'uzytkownik', description: 'Użytkownik do blacklist', type: 6, required: false }
   ]},
+  { name: 'unblacklistperrmison', description: 'Lista lub nadanie permisji do /unblacklist', default_member_permissions: PermissionFlagsBits.Administrator.toString(), options: [
+    { name: 'akcja', description: 'list/dodaj/usun', type: 3, required: true,
+      choices: [{ name: 'list', value: 'list' }, { name: 'dodaj', value: 'dodaj' }, { name: 'usun', value: 'usun' }] },
+    { name: 'rola', description: 'Rola do unblacklist', type: 8, required: false },
+    { name: 'uzytkownik', description: 'Użytkownik do unblacklist', type: 6, required: false }
+  ]},
   { name: 'blacklist', description: 'Nadaj blacklistę z własnym ID', options: [
-    { name: 'powod', description: 'Powód blacklisty', type: 3, required: true },
+    { name: 'akcja', description: 'Czy dać czy zdjąć BL', type: 3, required: true,
+      choices: [{ name: 'daj', value: 'daj' }, { name: 'usun', value: 'usun' }] },
     { name: 'uzytkownik', description: 'Użytkownik do blacklisty', type: 6, required: false },
-    { name: 'id', description: 'ID użytkownika, jeśli nie wybierasz z listy', type: 3, required: false }
+    { name: 'id', description: 'ID użytkownika albo ID blacklisty', type: 3, required: false },
+    { name: 'powod', description: 'Powód blacklisty', type: 3, required: false }
+  ]},
+  { name: 'unblacklist', description: 'Zdejmij blacklistę z użytkownika lub po ID blacklisty', options: [
+    { name: 'uzytkownik', description: 'Użytkownik do zdjęcia blacklisty', type: 6, required: false },
+    { name: 'id', description: 'ID użytkownika albo ID blacklisty', type: 3, required: false }
   ]},
   { name: 'ban-dc', description: 'Ban DC + ID kary', options: [
     { name: 'uzytkownik', description: 'Kogo banujesz', type: 6, required: true },
@@ -748,6 +785,30 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
+    if (interaction.commandName === 'unblacklistperrmison') {
+      if (!interaction.member.permissions?.has(PermissionFlagsBits.Administrator)) {
+        await interaction.reply({ content: '⛔ Tylko Admin może zarządzać permisją do unblacklist.', flags: 64 });
+        return;
+      }
+      const action = interaction.options.getString('akcja', true);
+      const role = interaction.options.getRole('rola');
+      const user = interaction.options.getUser('uzytkownik');
+      if (action === 'list') {
+        await interaction.reply({ content: formatPermissionList(cfg.unblacklistRoleIds, cfg.unblacklistUserIds), flags: 64 });
+        return;
+      }
+      if (!role && !user) {
+        await interaction.reply({ content: '⚠️ Podaj rolę lub użytkownika.', flags: 64 });
+        return;
+      }
+      if (role) updatePermissionEntries(cfg.unblacklistRoleIds, role.id, action);
+      if (user) updatePermissionEntries(cfg.unblacklistUserIds, user.id, action);
+      saveConfig();
+      const changed = [role ? `<@&${role.id}>` : null, user ? `<@${user.id}>` : null].filter(Boolean).join(', ');
+      await interaction.reply({ content: `✅ Zaktualizowano permisję unblacklist dla: ${changed}`, flags: 64 });
+      return;
+    }
+
     // role unban/unmute
     if (interaction.commandName === 'unkaryperrmision') {
       if (!interaction.member.permissions?.has(PermissionFlagsBits.Administrator)) {
@@ -904,53 +965,101 @@ client.on('interactionCreate', async (interaction) => {
     }
 
     // blacklist
-    if (interaction.commandName === 'blacklist') {
+    if (interaction.commandName === 'blacklist' || interaction.commandName === 'unblacklist') {
       if (!cfg.blacklistCommandChannelId || !cfg.blacklistLogChannelId) {
-        await interaction.reply({ content: '⚠️ Ustaw kanały: /blacklistchannel', flags: 64 });
+        await safeReply(interaction, { content: '⚠️ Ustaw kanały: /blacklistchannel', flags: 64 });
         return;
       }
       if (interaction.channelId !== cfg.blacklistCommandChannelId) {
-        await interaction.reply({ content: `🔒 /blacklist tylko w <#${cfg.blacklistCommandChannelId}>.`, flags: 64 });
+        const commandLabel = interaction.commandName === 'unblacklist' ? '/unblacklist' : '/blacklist';
+        await safeReply(interaction, { content: `🔒 ${commandLabel} tylko w <#${cfg.blacklistCommandChannelId}>.`, flags: 64 });
         return;
       }
-      if (!hasAllowedEntity(interaction.member, cfg.blacklistRoleIds, cfg.blacklistUserIds)) {
-        await interaction.reply({ content: '⛔ Brak uprawnień do /blacklist.', flags: 64 });
+      const isDirectUnblacklist = interaction.commandName === 'unblacklist';
+      const action = isDirectUnblacklist ? 'usun' : interaction.options.getString('akcja', true);
+      const needsUnblacklistPerm = action === 'usun';
+      const canUse = needsUnblacklistPerm
+        ? hasAllowedEntity(interaction.member, cfg.unblacklistRoleIds, cfg.unblacklistUserIds)
+        : hasAllowedEntity(interaction.member, cfg.blacklistRoleIds, cfg.blacklistUserIds);
+      if (!canUse) {
+        await safeReply(interaction, { content: `⛔ Brak uprawnień do ${needsUnblacklistPerm ? '/unblacklist' : '/blacklist'}.`, flags: 64 });
         return;
       }
-      const target = getUserTarget(interaction);
-      if (!target) {
-        await interaction.reply({ content: '⚠️ Podaj użytkownika albo poprawne ID.', flags: 64 });
+
+      if (action === 'daj') {
+        const target = getUserTarget(interaction);
+        if (!target) {
+          await safeReply(interaction, { content: '⚠️ Podaj użytkownika albo poprawne ID.', flags: 64 });
+          return;
+        }
+        const reason = (interaction.options.getString('powod') || '').trim();
+        if (!reason) {
+          await safeReply(interaction, { content: '⚠️ Podaj powód blacklisty.', flags: 64 });
+          return;
+        }
+        const existingBlacklist = findActiveBlacklistRecord(cfg, { userId: target.id });
+        if (existingBlacklist) {
+          await safeReply(interaction, { content: `⚠️ Ten użytkownik ma już aktywną blacklistę. ID: ${existingBlacklist.id}`, flags: 64 });
+          return;
+        }
+        const blacklistId = generateId('BL');
+        const moderator = `<@${interaction.user.id}>`;
+        cfg.banRecords.unshift({
+          id: blacklistId,
+          type: 'blacklist',
+          userId: target.id,
+          reason,
+          duration: 'Na zawsze',
+          moderator,
+          active: true,
+          ts: Date.now()
+        });
+        cfg.banRecords = cfg.banRecords.slice(0, 50);
+        saveConfig();
+        const emb = new EmbedBuilder().setColor(Colors.Red).setTitle('Użytkownik dostał blackliste')
+          .addFields(
+            { name: 'Użytkownik', value: target.mention, inline: true },
+            { name: 'Moderator', value: moderator, inline: true },
+            { name: 'Powód', value: reason, inline: false },
+            { name: 'ID kary', value: blacklistId, inline: true },
+            { name: 'Czas trwania', value: 'Na zawsze', inline: true }
+          );
+        try {
+          const ch = await interaction.client.channels.fetch(cfg.blacklistLogChannelId);
+          await ch.send({ embeds: [emb] });
+          await safeReply(interaction, { content: `✅ Nadano blacklistę dla ${target.mention} | ID: ${blacklistId}`, flags: 64 });
+        } catch {
+          await safeReply(interaction, { content: '❌ Nie mogłem wysłać logu blacklisty. Sprawdź kanał logów.', flags: 64 });
+        }
         return;
       }
-      const reason = interaction.options.getString('powod', true);
-      const blacklistId = generateId('BL');
-      const moderator = `<@${interaction.user.id}>`;
-      cfg.banRecords.unshift({
-        id: blacklistId,
-        type: 'blacklist',
-        userId: target.id,
-        reason,
-        duration: 'Na zawsze',
-        moderator,
-        ts: Date.now()
-      });
-      cfg.banRecords = cfg.banRecords.slice(0, 50);
+
+      const lookup = getBlacklistLookup(interaction);
+      if (!lookup.userId && !lookup.recordId) {
+        await safeReply(interaction, { content: '⚠️ Podaj użytkownika, ID użytkownika albo ID blacklisty.', flags: 64 });
+        return;
+      }
+      const record = findActiveBlacklistRecord(cfg, lookup);
+      if (!record) {
+        await safeReply(interaction, { content: '⚠️ Nie znalazłem aktywnej blacklisty dla tego użytkownika lub ID.', flags: 64 });
+        return;
+      }
+      record.active = false;
+      record.removedAt = Date.now();
+      record.removedBy = `<@${interaction.user.id}>`;
       saveConfig();
-      const emb = new EmbedBuilder().setColor(Colors.Red).setTitle('Użytkownik dostał blackliste')
+      const targetMention = `<@${record.userId}>`;
+      const emb = new EmbedBuilder().setColor(Colors.Green).setTitle('Użytkownikowi zdjęto blackliste')
         .addFields(
-          { name: 'Użytkownik', value: target.mention, inline: true },
-          { name: 'Moderator', value: moderator, inline: true },
-          { name: 'Powód', value: reason, inline: false },
-          { name: 'ID kary', value: blacklistId, inline: true },
-          { name: 'Czas trwania', value: 'Na zawsze', inline: true }
+          { name: 'Użytkownik', value: targetMention, inline: true },
+          { name: 'Moderator', value: `<@${interaction.user.id}>`, inline: true },
+          { name: 'ID kary', value: record.id, inline: true }
         );
       try {
         const ch = await interaction.client.channels.fetch(cfg.blacklistLogChannelId);
         await ch.send({ embeds: [emb] });
-        await interaction.reply({ content: `✅ Nadano blacklistę dla ${target.mention} | ID: ${blacklistId}`, flags: 64 });
-      } catch {
-        await interaction.reply({ content: '❌ Nie mogłem wysłać logu blacklisty. Sprawdź kanał logów.', flags: 64 });
-      }
+      } catch {}
+      await safeReply(interaction, { content: `✅ Zdjęto blacklistę użytkownikowi ${targetMention} | ID: ${record.id}`, flags: 64 });
       return;
     }
 
@@ -1095,7 +1204,11 @@ client.on('interactionCreate', async (interaction) => {
       const start = (page - 1) * pageSize;
       const slice = cfg.banRecords.slice(start, start + pageSize);
       const lines = slice.map(b => {
-        const typeLabel = b.type === 'mute' ? 'MUTE' : b.type === 'blacklist' ? 'BLACKLIST' : 'BAN';
+        const typeLabel = b.type === 'mute'
+          ? 'MUTE'
+          : b.type === 'blacklist'
+            ? `BLACKLIST-${b.active === false ? 'ZDJETA' : 'AKTYWNA'}`
+            : 'BAN';
         return `${b.id} [${typeLabel}] | <@${b.userId}> | ${b.duration}${b.until ? ' | Do: ' + b.until : ''} | ${b.reason}`;
       });
       const totalPages = Math.max(1, Math.ceil(cfg.banRecords.length / pageSize));
@@ -1110,7 +1223,9 @@ client.on('interactionCreate', async (interaction) => {
       if (!record) { await interaction.reply({ content: 'Nie znaleziono kary o podanym ID.', flags: 64 }); return; }
       const type = record.type === 'mute' ? 'MUTE' : record.type === 'blacklist' ? 'BLACKLIST' : 'BAN';
       const until = record.until ? ` | Do: ${record.until}` : '';
-      await interaction.reply({ content: `**${record.id}** [${type}] | <@${record.userId}> | ${record.duration}${until}\nPowód: ${record.reason}\nModerator: ${record.moderator || 'brak'}`, flags: 64 });
+      const blacklistStatus = record.type === 'blacklist' ? `\nStatus: ${record.active === false ? 'Zdjęta' : 'Aktywna'}` : '';
+      const removedBy = record.type === 'blacklist' && record.active === false ? `\nZdjął: ${record.removedBy || 'brak danych'}` : '';
+      await interaction.reply({ content: `**${record.id}** [${type}] | <@${record.userId}> | ${record.duration}${until}\nPowód: ${record.reason}\nModerator: ${record.moderator || 'brak'}${blacklistStatus}${removedBy}`, flags: 64 });
       return;
     }
 
