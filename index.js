@@ -453,11 +453,6 @@ const commands = [
       choices: [{ name: 'dodaj', value: 'add' }, { name: 'usuń', value: 'remove' }] }
   ]},
   { name: 'zmianakanlowlist', description: 'Lista ról do zmiany kanałów konfiguracyjnych' },
-  { name: 'commandvisibility', description: 'Widoczność komend (poza /skarga)', options: [
-    { name: 'akcja', description: 'on/off/list-on/list-off', type: 3, required: true,
-      choices: [ { name: 'on', value: 'on' }, { name: 'off', value: 'off' }, { name: 'list-on', value: 'list-on' }, { name: 'list-off', value: 'list-off' } ] },
-    { name: 'rola', description: 'Rola (dla on/off)', type: 8, required: false }
-  ]},
   { name: 'unbanchannel', description: 'Kanał do nadawania unbanów/unmute DC', options: [
     { name: 'kanal', description: 'Kanał komend unban/unmute', type: 7, required: true }
   ]},
@@ -588,38 +583,6 @@ client.on('interactionCreate', async (interaction) => {
 
     if (['saveserver', 'backup'].includes(interaction.commandName) && !isBackupOwner(interaction.user)) {
       await safeReply(interaction, { content: '⛔ Tej komendy może używać tylko Tomala6.', flags: 64 });
-      return;
-    }
-
-    // widoczność
-    if (interaction.commandName === 'commandvisibility') {
-      if (!interaction.member.permissions?.has(PermissionFlagsBits.Administrator)) {
-        await interaction.reply({ content: '⛔ Tylko Administrator może zmieniać widoczność.', flags: 64 });
-        return;
-      }
-      const action = interaction.options.getString('akcja', true);
-      const role = interaction.options.getRole('rola');
-      if (['on','off'].includes(action) && !role) return interaction.reply({ content: 'Podaj rolę.', flags: 64 });
-      if (action === 'on') {
-        if (!cfg.visibilityOnRoleIds.includes(role.id)) cfg.visibilityOnRoleIds.push(role.id);
-        cfg.visibilityOffRoleIds = cfg.visibilityOffRoleIds.filter(id => id !== role.id);
-        saveConfig();
-        return interaction.reply({ content: `✅ Rola <@&${role.id}> widzi wszystkie komendy.`, flags: 64 });
-      }
-      if (action === 'off') {
-        if (!cfg.visibilityOffRoleIds.includes(role.id)) cfg.visibilityOffRoleIds.push(role.id);
-        cfg.visibilityOnRoleIds = cfg.visibilityOnRoleIds.filter(id => id !== role.id);
-        saveConfig();
-        return interaction.reply({ content: `✅ Rola <@&${role.id}> widzi tylko /skarga.`, flags: 64 });
-      }
-      if (action === 'list-on') {
-        const list = cfg.visibilityOnRoleIds.length ? cfg.visibilityOnRoleIds.map(id => `<@&${id}>`).join(', ') : 'brak';
-        return interaction.reply({ content: `Widzą (on): ${list}`, flags: 64 });
-      }
-      if (action === 'list-off') {
-        const list = cfg.visibilityOffRoleIds.length ? cfg.visibilityOffRoleIds.map(id => `<@&${id}>`).join(', ') : 'brak';
-        return interaction.reply({ content: `Nie widzą (off): ${list}`, flags: 64 });
-      }
       return;
     }
 
