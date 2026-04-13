@@ -470,7 +470,8 @@ const commands = [
   { name: 'usunwiadomosci', description: 'Usuń wiadomości wybranego gracza z ostatniego czasu w tym kanale', options: [
     { name: 'czas', description: 'Zakres czasu, np. 30m, 2h, 1d', type: 3, required: true },
     { name: 'uzytkownik', description: 'Gracz, którego wiadomości usunąć', type: 6, required: false },
-    { name: 'id', description: 'ID gracza, jeśli nie wybierasz z listy', type: 3, required: false }
+    { name: 'id', description: 'ID gracza, jeśli nie wybierasz z listy', type: 3, required: false },
+    { name: 'kanal', description: 'Kanał, z którego usunąć wiadomości', type: 7, required: false }
   ]},
   { name: 'usunwiadomosciperrmison', description: 'Lista lub nadanie permisji do /usunwiadomosci', default_member_permissions: PermissionFlagsBits.Administrator.toString(), options: [
     { name: 'akcja', description: 'list/dodaj/usun', type: 3, required: true,
@@ -1080,7 +1081,8 @@ client.on('interactionCreate', async (interaction) => {
         await safeReply(interaction, { content: '⚠️ Podaj czas np. 30m, 2h, 1d.', flags: 64 });
         return;
       }
-      const channel = interaction.channel;
+      const selectedChannel = interaction.options.getChannel('kanal');
+      const channel = selectedChannel ?? interaction.channel;
       if (!isSupportedTextChannel(channel) || !channel?.messages?.fetch) {
         await safeReply(interaction, { content: '⚠️ Tej komendy można użyć tylko na kanale tekstowym.', flags: 64 });
         return;
@@ -1123,17 +1125,18 @@ client.on('interactionCreate', async (interaction) => {
         if (batchIndex === 19) hitLimit = true;
       }
       const limitNote = hitLimit ? ' Przeskanowałem 2000 ostatnich wiadomości kanału.' : '';
+      const channelNote = ` na kanale <#${channel.id}>`;
       if (matched === 0) {
-        await interaction.editReply(`⚠️ Nie znalazłem wiadomości użytkownika ${target.mention} z ostatnich ${czas}.${limitNote}`);
+        await interaction.editReply(`⚠️ Nie znalazłem wiadomości użytkownika ${target.mention}${channelNote} z ostatnich ${czas}.${limitNote}`);
         return;
       }
       if (deleted === 0 && failed > 0) {
         const reason = firstDeleteError?.code ? ` Kod błędu: ${firstDeleteError.code}.` : '';
-        await interaction.editReply(`❌ Znalazłem ${matched} wiadomości użytkownika ${target.mention}, ale nie mogłem ich usunąć.${reason} Sprawdź permisję bota i ustawienia kanału.`);
+        await interaction.editReply(`❌ Znalazłem ${matched} wiadomości użytkownika ${target.mention}${channelNote}, ale nie mogłem ich usunąć.${reason} Sprawdź permisję bota i ustawienia kanału.`);
         return;
       }
       const failNote = failed > 0 ? ` Nie udało się usunąć ${failed} wiadomości.` : '';
-      await interaction.editReply(`✅ Usunięto ${deleted} wiadomości użytkownika ${target.mention} z ostatnich ${czas}.${limitNote}${failNote}`);
+      await interaction.editReply(`✅ Usunięto ${deleted} wiadomości użytkownika ${target.mention}${channelNote} z ostatnich ${czas}.${limitNote}${failNote}`);
       return;
     }
 
