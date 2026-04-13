@@ -467,8 +467,8 @@ const commands = [
     { name: 'czas', description: 'Czas (np. 30m, 2h, 1d)', type: 3, required: true },
     { name: 'moderator', description: 'Moderator', type: 3, required: true }
   ]},
-  { name: 'usunwiadomosci', description: 'Usuń wiadomości wybranego gracza z ostatniego czasu w tym kanale', options: [
-    { name: 'czas', description: 'Zakres czasu, np. 30m, 2h, 1d', type: 3, required: true },
+  { name: 'usunwiadomosci', description: 'Usuń wiadomości gracza albo cały kanał z czasu lub całkowicie', options: [
+    { name: 'czas', description: 'Zakres czasu, np. 30m, 2h, 1d albo wszystkie', type: 3, required: true },
     { name: 'uzytkownik', description: 'Gracz, którego wiadomości usunąć', type: 6, required: false },
     { name: 'id', description: 'ID gracza, jeśli nie wybierasz z listy', type: 3, required: false },
     { name: 'kanal', description: 'Kanał, z którego usunąć wiadomości', type: 7, required: false }
@@ -1070,17 +1070,15 @@ client.on('interactionCreate', async (interaction) => {
         await safeReply(interaction, { content: '⛔ Brak uprawnień do /usunwiadomosci.', flags: 64 });
         return;
       }
-      const target = getUserTarget(interaction);
-      if (!target) {
-        await safeReply(interaction, { content: '⚠️ Podaj użytkownika albo poprawne ID.', flags: 64 });
-        return;
-      }
       const czas = interaction.options.getString('czas', true);
-      const ms = parseDurationMs(czas);
-      if (ms === null) {
-        await safeReply(interaction, { content: '⚠️ Podaj czas np. 30m, 2h, 1d.', flags: 64 });
+      const removeAll = ['all', 'wszystkie', 'caly', 'całe', 'cale'].includes(czas.trim().toLowerCase());
+      const ms = removeAll ? null : parseDurationMs(czas);
+      if (!removeAll && ms === null) {
+        await safeReply(interaction, { content: '⚠️ Podaj czas np. 30m, 2h, 1d albo wpisz `wszystkie`.', flags: 64 });
         return;
       }
+      const target = getUserTarget(interaction);
+      const modeLabel = target ? `użytkownika ${target.mention}` : 'całego kanału';
       const selectedChannel = interaction.options.getChannel('kanal');
       const channel = selectedChannel ?? interaction.channel;
       if (!isSupportedTextChannel(channel) || !channel?.messages?.fetch) {
@@ -1094,7 +1092,7 @@ client.on('interactionCreate', async (interaction) => {
         return;
       }
       await interaction.deferReply({ flags: 64 });
-      const cutoff = Date.now() - ms;
+      const cutoff = removeAll ? null : Date.now() - ms;
       let before;
       let deleted = 0;
       let matched = 0;
@@ -1106,11 +1104,11 @@ client.on('interactionCreate', async (interaction) => {
         if (!fetched.size) break;
         let shouldStop = false;
         for (const message of fetched.values()) {
-          if (message.createdTimestamp < cutoff) {
+          if (cutoff !== null && message.createdTimestamp < cutoff) {
             shouldStop = true;
             break;
           }
-          if (message.author?.id !== target.id) continue;
+          if (target && message.author?.id !== target.id) continue;
           matched++;
           try {
             await message.delete();
@@ -1126,17 +1124,18 @@ client.on('interactionCreate', async (interaction) => {
       }
       const limitNote = hitLimit ? ' Przeskanowałem 2000 ostatnich wiadomości kanału.' : '';
       const channelNote = ` na kanale <#${channel.id}>`;
+      const rangeLabel = removeAll ? 'wszystkie wiadomości' : `wiadomości z ostatnich ${czas}`;
       if (matched === 0) {
-        await interaction.editReply(`⚠️ Nie znalazłem wiadomości użytkownika ${target.mention}${channelNote} z ostatnich ${czas}.${limitNote}`);
+        await interaction.editReply(`⚠️ Nie znalazłem ${rangeLabel} dla ${modeLabel}${channelNote}.${limitNote}`);
         return;
       }
       if (deleted === 0 && failed > 0) {
         const reason = firstDeleteError?.code ? ` Kod błędu: ${firstDeleteError.code}.` : '';
-        await interaction.editReply(`❌ Znalazłem ${matched} wiadomości użytkownika ${target.mention}${channelNote}, ale nie mogłem ich usunąć.${reason} Sprawdź permisję bota i ustawienia kanału.`);
+        await interaction.editReply(`❌ Znalazłem ${matched} wiadomości dla ${modeLabel}${channelNote}, ale nie mogłem ich usunąć.${reason} Sprawdź permisję bota i ustawienia kanału.`);
         return;
       }
       const failNote = failed > 0 ? ` Nie udało się usunąć ${failed} wiadomości.` : '';
-      await interaction.editReply(`✅ Usunięto ${deleted} wiadomości użytkownika ${target.mention}${channelNote} z ostatnich ${czas}.${limitNote}${failNote}`);
+      await interaction.editReply(`✅ Usunięto ${deleted} wiadomości dla ${modeLabel}${channelNote}${removeAll ? '.' : ` z ostatnich ${czas}.`}${limitNote}${failNote}`);
       return;
     }
 
