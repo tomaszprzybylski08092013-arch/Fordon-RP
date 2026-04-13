@@ -1013,10 +1013,19 @@ client.on('interactionCreate', async (interaction) => {
         await safeReply(interaction, { content: '⚠️ Tej komendy można użyć tylko na kanale tekstowym.', flags: 64 });
         return;
       }
+      const botMember = await interaction.guild.members.fetchMe().catch(() => null);
+      const perms = botMember ? channel.permissionsFor(botMember) : null;
+      if (!perms?.has(PermissionFlagsBits.ViewChannel) || !perms?.has(PermissionFlagsBits.ReadMessageHistory) || !perms?.has(PermissionFlagsBits.ManageMessages)) {
+        await safeReply(interaction, { content: '❌ Bot nie ma uprawnień `Wyświetlanie kanału`, `Czytanie historii wiadomości` lub `Zarządzanie wiadomościami` na tym kanale.', flags: 64 });
+        return;
+      }
       await interaction.deferReply({ flags: 64 });
       const cutoff = Date.now() - ms;
       let before;
       let deleted = 0;
+      let matched = 0;
+      let failed = 0;
+      let firstDeleteError = null;
       let hitLimit = false;
       for (let batchIndex = 0; batchIndex < 20; batchIndex++) {
         const fetched = await channel.messages.fetch(before ? { limit: 100, before } : { limit: 100 });
@@ -1028,17 +1037,31 @@ client.on('interactionCreate', async (interaction) => {
             break;
           }
           if (message.author?.id !== target.id) continue;
+          matched++;
           try {
             await message.delete();
             deleted++;
-          } catch {}
+          } catch (err) {
+            failed++;
+            firstDeleteError = firstDeleteError ?? err;
+          }
         }
         if (shouldStop || fetched.size < 100) break;
         before = fetched.last().id;
         if (batchIndex === 19) hitLimit = true;
       }
       const limitNote = hitLimit ? ' Przeskanowałem 2000 ostatnich wiadomości kanału.' : '';
-      await interaction.editReply(`✅ Usunięto ${deleted} wiadomości użytkownika ${target.mention} z ostatnich ${czas}.${limitNote}`);
+      if (matched === 0) {
+        await interaction.editReply(`⚠️ Nie znalazłem wiadomości użytkownika ${target.mention} z ostatnich ${czas}.${limitNote}`);
+        return;
+      }
+      if (deleted === 0 && failed > 0) {
+        const reason = firstDeleteError?.code ? ` Kod błędu: ${firstDeleteError.code}.` : '';
+        await interaction.editReply(`❌ Znalazłem ${matched} wiadomości użytkownika ${target.mention}, ale nie mogłem ich usunąć.${reason} Sprawdź permisję bota i ustawienia kanału.`);
+        return;
+      }
+      const failNote = failed > 0 ? ` Nie udało się usunąć ${failed} wiadomości.` : '';
+      await interaction.editReply(`✅ Usunięto ${deleted} wiadomości użytkownika ${target.mention} z ostatnich ${czas}.${limitNote}${failNote}`);
       return;
     }
 
