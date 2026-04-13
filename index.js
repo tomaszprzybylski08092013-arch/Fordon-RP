@@ -9,6 +9,7 @@ import path from 'path';
 const { DISCORD_TOKEN, DISCORD_APP_ID, GUILD_ID } = process.env;
 if (!DISCORD_TOKEN || !DISCORD_APP_ID || !GUILD_ID) throw new Error('Brak env DISCORD_TOKEN / DISCORD_APP_ID / GUILD_ID');
 const BACKUP_OWNER_ID = '1378291577973379117';
+const DISPLAY_TIME_ZONE = process.env.DISPLAY_TIME_ZONE || 'Europe/Warsaw';
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMessages] });
 const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || process.cwd();
@@ -174,6 +175,13 @@ function parseDurationMs(str) {
   const unit = m[2] || 'm';
   const mult = unit === 'h' ? 60 : unit === 'd' ? 1440 : 1;
   return value * mult * 60 * 1000;
+}
+function formatDateTime(date) {
+  return new Intl.DateTimeFormat('pl-PL', {
+    dateStyle: 'full',
+    timeStyle: 'short',
+    timeZone: DISPLAY_TIME_ZONE
+  }).format(date);
 }
 function generateId(prefix = 'BAN') {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -1075,7 +1083,7 @@ client.on('interactionCreate', async (interaction) => {
       const ms = parseDurationMs(czas);
       if (ms === null) { await interaction.reply({ content: '⚠️ Podaj czas np. 30m, 2h, 1d.', flags: 64 }); return; }
       const muteId = generateId('MUTE');
-      const until = new Date(Date.now() + ms).toLocaleString('pl-PL', { dateStyle: 'full', timeStyle: 'short' });
+      const until = formatDateTime(new Date(Date.now() + ms));
       try { const member = await interaction.guild.members.fetch(targetUser.id); await member.timeout(ms, `${reason} | ID ${muteId}`); }
       catch { await interaction.reply({ content: '❌ Nie mogłem ustawić mute (sprawdź uprawnienia bota).', flags: 64 }); return; }
       cfg.banRecords.unshift({ id: muteId, type: 'mute', userId: targetUser.id, reason, duration: czas, moderator, until, ts: Date.now() });
