@@ -406,9 +406,9 @@ const commands = [
     { name: 'uzytkownik', description: 'Użytkownik do blacklist', type: 6, required: false }
   ]},
   { name: 'blacklist', description: 'Nadaj blacklistę z własnym ID', options: [
+    { name: 'powod', description: 'Powód blacklisty', type: 3, required: true },
     { name: 'uzytkownik', description: 'Użytkownik do blacklisty', type: 6, required: false },
-    { name: 'id', description: 'ID użytkownika, jeśli nie wybierasz z listy', type: 3, required: false },
-    { name: 'powod', description: 'Powód blacklisty', type: 3, required: true }
+    { name: 'id', description: 'ID użytkownika, jeśli nie wybierasz z listy', type: 3, required: false }
   ]},
   { name: 'ban-dc', description: 'Ban DC + ID kary', options: [
     { name: 'uzytkownik', description: 'Kogo banujesz', type: 6, required: true },
@@ -423,9 +423,9 @@ const commands = [
     { name: 'moderator', description: 'Moderator', type: 3, required: true }
   ]},
   { name: 'usunwiadomosci', description: 'Usuń wiadomości wybranego gracza z ostatniego czasu w tym kanale', options: [
+    { name: 'czas', description: 'Zakres czasu, np. 30m, 2h, 1d', type: 3, required: true },
     { name: 'uzytkownik', description: 'Gracz, którego wiadomości usunąć', type: 6, required: false },
-    { name: 'id', description: 'ID gracza, jeśli nie wybierasz z listy', type: 3, required: false },
-    { name: 'czas', description: 'Zakres czasu, np. 30m, 2h, 1d', type: 3, required: true }
+    { name: 'id', description: 'ID gracza, jeśli nie wybierasz z listy', type: 3, required: false }
   ]},
   { name: 'usunwiadomosciperrmison', description: 'Lista lub nadanie permisji do /usunwiadomosci', default_member_permissions: PermissionFlagsBits.Administrator.toString(), options: [
     { name: 'akcja', description: 'list/dodaj/usun', type: 3, required: true,
