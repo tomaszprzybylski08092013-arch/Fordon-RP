@@ -10,7 +10,7 @@ const { DISCORD_TOKEN, DISCORD_APP_ID, GUILD_ID } = process.env;
 if (!DISCORD_TOKEN || !DISCORD_APP_ID || !GUILD_ID) throw new Error('Brak env DISCORD_TOKEN / DISCORD_APP_ID / GUILD_ID');
 const BACKUP_OWNER_ID = '1378291577973379117';
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMessages] });
 const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || process.cwd();
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -32,11 +32,17 @@ function ensureGuild(gid) {
   g.praiseChannelId = g.praiseChannelId ?? null;
   g.dcCommandChannelId = g.dcCommandChannelId ?? null;
   g.dcLogChannelId = g.dcLogChannelId ?? null;
+  g.blacklistCommandChannelId = g.blacklistCommandChannelId ?? null;
+  g.blacklistLogChannelId = g.blacklistLogChannelId ?? null;
   g.unbanChannelId = g.unbanChannelId ?? null;
   g.tempVoiceTemplateId = g.tempVoiceTemplateId ?? null;
   g.channelRoleIds = Array.isArray(g.channelRoleIds) ? g.channelRoleIds : [];
   g.banRoleIds = Array.isArray(g.banRoleIds) ? g.banRoleIds : [];
   g.unbanRoleIds = Array.isArray(g.unbanRoleIds) ? g.unbanRoleIds : [];
+  g.blacklistRoleIds = Array.isArray(g.blacklistRoleIds) ? g.blacklistRoleIds : [];
+  g.blacklistUserIds = Array.isArray(g.blacklistUserIds) ? g.blacklistUserIds : [];
+  g.clearMessageRoleIds = Array.isArray(g.clearMessageRoleIds) ? g.clearMessageRoleIds : [];
+  g.clearMessageUserIds = Array.isArray(g.clearMessageUserIds) ? g.clearMessageUserIds : [];
   g.visibilityOnRoleIds = Array.isArray(g.visibilityOnRoleIds) ? g.visibilityOnRoleIds : [];
   g.visibilityOffRoleIds = Array.isArray(g.visibilityOffRoleIds) ? g.visibilityOffRoleIds : [];
   g.banRecords = Array.isArray(g.banRecords) ? g.banRecords : [];
@@ -100,6 +106,47 @@ function hasAllowedRole(member, ids = []) {
   if (member.permissions?.has(PermissionFlagsBits.Administrator)) return true;
   if (!member?.roles?.cache) return false;
   return member.roles.cache.some(r => arr.includes(r.id));
+}
+function hasAllowedEntity(member, roleIds = [], userIds = []) {
+  const allowedUsers = Array.isArray(userIds) ? userIds : [];
+  if (member.permissions?.has(PermissionFlagsBits.Administrator)) return true;
+  if (allowedUsers.includes(member.id)) return true;
+  return hasAllowedRole(member, roleIds);
+}
+function parseDiscordUserId(input) {
+  const raw = (input || '').trim();
+  if (!raw) return null;
+  const match = raw.match(/^<@!?(\d{17,20})>$/) || raw.match(/^(\d{17,20})$/);
+  return match?.[1] ?? null;
+}
+function getUserTarget(interaction, userOptionName = 'uzytkownik', idOptionName = 'id') {
+  const user = interaction.options.getUser(userOptionName);
+  if (user) {
+    return { id: user.id, mention: `<@${user.id}>` };
+  }
+  const parsedId = parseDiscordUserId(interaction.options.getString(idOptionName));
+  if (!parsedId) return null;
+  return { id: parsedId, mention: `<@${parsedId}>` };
+}
+function formatPermissionList(roleIds = [], userIds = []) {
+  const roles = roleIds.length ? roleIds.map(id => `<@&${id}>`).join(', ') : 'brak';
+  const users = userIds.length ? userIds.map(id => `<@${id}>`).join(', ') : 'brak';
+  return `Role: ${roles}\nUżytkownicy: ${users}`;
+}
+function updatePermissionEntries(ids, entityId, action) {
+  if (!Array.isArray(ids)) return;
+  if (action === 'dodaj') {
+    if (!ids.includes(entityId)) ids.push(entityId);
+    return;
+  }
+  if (action === 'usun') {
+    const next = ids.filter(id => id !== entityId);
+    ids.length = 0;
+    ids.push(...next);
+  }
+}
+function isSupportedTextChannel(channel) {
+  return !!channel && typeof channel.isTextBased === 'function' && channel.isTextBased();
 }
 function isCommandVisible(member, cfg, commandName) {
   if (['skarga', 'pochwala'].includes(commandName)) return true;
@@ -348,6 +395,21 @@ const commands = [
     { name: 'komendy', description: 'Kanał komendy', type: 7, required: true },
     { name: 'logi', description: 'Kanał logów', type: 7, required: true }
   ]},
+  { name: 'blacklistchannel', description: 'Ustaw kanał komendy i logów blacklist', default_member_permissions: PermissionFlagsBits.Administrator.toString(), options: [
+    { name: 'komendy', description: 'Kanał do wpisywania /blacklist', type: 7, required: true },
+    { name: 'logi', description: 'Kanał logów blacklist', type: 7, required: true }
+  ]},
+  { name: 'blacklistpermison', description: 'Lista lub nadanie permisji do /blacklist', default_member_permissions: PermissionFlagsBits.Administrator.toString(), options: [
+    { name: 'akcja', description: 'list/dodaj/usun', type: 3, required: true,
+      choices: [{ name: 'list', value: 'list' }, { name: 'dodaj', value: 'dodaj' }, { name: 'usun', value: 'usun' }] },
+    { name: 'rola', description: 'Rola do blacklist', type: 8, required: false },
+    { name: 'uzytkownik', description: 'Użytkownik do blacklist', type: 6, required: false }
+  ]},
+  { name: 'blacklist', description: 'Nadaj blacklistę z własnym ID', options: [
+    { name: 'uzytkownik', description: 'Użytkownik do blacklisty', type: 6, required: false },
+    { name: 'id', description: 'ID użytkownika, jeśli nie wybierasz z listy', type: 3, required: false },
+    { name: 'powod', description: 'Powód blacklisty', type: 3, required: true }
+  ]},
   { name: 'ban-dc', description: 'Ban DC + ID kary', options: [
     { name: 'uzytkownik', description: 'Kogo banujesz', type: 6, required: true },
     { name: 'reason', description: 'Powód', type: 3, required: true },
@@ -360,7 +422,18 @@ const commands = [
     { name: 'czas', description: 'Czas (np. 30m, 2h, 1d)', type: 3, required: true },
     { name: 'moderator', description: 'Moderator', type: 3, required: true }
   ]},
-  { name: 'idlist', description: 'ID kar banów/mute DC', options: [
+  { name: 'usunwiadomosci', description: 'Usuń wiadomości wybranego gracza z ostatniego czasu w tym kanale', options: [
+    { name: 'uzytkownik', description: 'Gracz, którego wiadomości usunąć', type: 6, required: false },
+    { name: 'id', description: 'ID gracza, jeśli nie wybierasz z listy', type: 3, required: false },
+    { name: 'czas', description: 'Zakres czasu, np. 30m, 2h, 1d', type: 3, required: true }
+  ]},
+  { name: 'usunwiadomosciperrmison', description: 'Lista lub nadanie permisji do /usunwiadomosci', default_member_permissions: PermissionFlagsBits.Administrator.toString(), options: [
+    { name: 'akcja', description: 'list/dodaj/usun', type: 3, required: true,
+      choices: [{ name: 'list', value: 'list' }, { name: 'dodaj', value: 'dodaj' }, { name: 'usun', value: 'usun' }] },
+    { name: 'rola', description: 'Rola do /usunwiadomosci', type: 8, required: false },
+    { name: 'uzytkownik', description: 'Użytkownik do /usunwiadomosci', type: 6, required: false }
+  ]},
+  { name: 'idlist', description: 'ID kar banów, mute DC i blacklist', options: [
     { name: 'strona', description: 'Numer strony (15 wpisów na stronę)', type: 4, required: false }
   ]},
   { name: 'idsearch', description: 'Szukaj kary po ID', options: [
@@ -608,6 +681,25 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
+    // kanał blacklist
+    if (interaction.commandName === 'blacklistchannel') {
+      if (!interaction.member.permissions?.has(PermissionFlagsBits.Administrator) && !hasAllowedRole(interaction.member, cfg.channelRoleIds)) {
+        await interaction.reply({ content: '⛔ Brak uprawnień do zmiany kanałów.', flags: 64 });
+        return;
+      }
+      const commandChannel = interaction.options.getChannel('komendy', true);
+      const logChannel = interaction.options.getChannel('logi', true);
+      if (!isSupportedTextChannel(commandChannel) || !isSupportedTextChannel(logChannel)) {
+        await interaction.reply({ content: '⚠️ Wybierz kanały tekstowe.', flags: 64 });
+        return;
+      }
+      cfg.blacklistCommandChannelId = commandChannel.id;
+      cfg.blacklistLogChannelId = logChannel.id;
+      saveConfig();
+      await interaction.reply({ content: `✅ /blacklist: <#${cfg.blacklistCommandChannelId}> -> <#${cfg.blacklistLogChannelId}>`, flags: 64 });
+      return;
+    }
+
     // kanał unban/unmute
     if (interaction.commandName === 'unbanchannel') {
       if (!interaction.member.permissions?.has(PermissionFlagsBits.Administrator) && !hasAllowedRole(interaction.member, cfg.channelRoleIds)) {
@@ -661,6 +753,30 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
+    if (interaction.commandName === 'blacklistpermison') {
+      if (!interaction.member.permissions?.has(PermissionFlagsBits.Administrator)) {
+        await interaction.reply({ content: '⛔ Tylko Admin może zarządzać permisją do blacklist.', flags: 64 });
+        return;
+      }
+      const action = interaction.options.getString('akcja', true);
+      const role = interaction.options.getRole('rola');
+      const user = interaction.options.getUser('uzytkownik');
+      if (action === 'list') {
+        await interaction.reply({ content: formatPermissionList(cfg.blacklistRoleIds, cfg.blacklistUserIds), flags: 64 });
+        return;
+      }
+      if (!role && !user) {
+        await interaction.reply({ content: '⚠️ Podaj rolę lub użytkownika.', flags: 64 });
+        return;
+      }
+      if (role) updatePermissionEntries(cfg.blacklistRoleIds, role.id, action);
+      if (user) updatePermissionEntries(cfg.blacklistUserIds, user.id, action);
+      saveConfig();
+      const changed = [role ? `<@&${role.id}>` : null, user ? `<@${user.id}>` : null].filter(Boolean).join(', ');
+      await interaction.reply({ content: `✅ Zaktualizowano permisję blacklist dla: ${changed}`, flags: 64 });
+      return;
+    }
+
     // role unban/unmute
     if (interaction.commandName === 'unkaryperrmision') {
       if (!interaction.member.permissions?.has(PermissionFlagsBits.Administrator)) {
@@ -706,6 +822,30 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.commandName === 'zmianakanlowlist') {
       const list = cfg.channelRoleIds.length ? cfg.channelRoleIds.map(id => `<@&${id}>`).join(', ') : 'Brak ról do zmiany kanałów.';
       await safeReply(interaction, { content: list, flags: 64 });
+      return;
+    }
+
+    if (interaction.commandName === 'usunwiadomosciperrmison') {
+      if (!interaction.member.permissions?.has(PermissionFlagsBits.Administrator)) {
+        await safeReply(interaction, { content: '⛔ Tylko Admin może zarządzać permisją do usuwania wiadomości.', flags: 64 });
+        return;
+      }
+      const action = interaction.options.getString('akcja', true);
+      const role = interaction.options.getRole('rola');
+      const user = interaction.options.getUser('uzytkownik');
+      if (action === 'list') {
+        await safeReply(interaction, { content: formatPermissionList(cfg.clearMessageRoleIds, cfg.clearMessageUserIds), flags: 64 });
+        return;
+      }
+      if (!role && !user) {
+        await safeReply(interaction, { content: '⚠️ Podaj rolę lub użytkownika.', flags: 64 });
+        return;
+      }
+      if (role) updatePermissionEntries(cfg.clearMessageRoleIds, role.id, action);
+      if (user) updatePermissionEntries(cfg.clearMessageUserIds, user.id, action);
+      saveConfig();
+      const changed = [role ? `<@&${role.id}>` : null, user ? `<@${user.id}>` : null].filter(Boolean).join(', ');
+      await safeReply(interaction, { content: `✅ Zaktualizowano permisję /usunwiadomosci dla: ${changed}`, flags: 64 });
       return;
     }
 
@@ -792,6 +932,108 @@ client.on('interactionCreate', async (interaction) => {
       }
     }
 
+    // blacklist
+    if (interaction.commandName === 'blacklist') {
+      if (!cfg.blacklistCommandChannelId || !cfg.blacklistLogChannelId) {
+        await interaction.reply({ content: '⚠️ Ustaw kanały: /blacklistchannel', flags: 64 });
+        return;
+      }
+      if (interaction.channelId !== cfg.blacklistCommandChannelId) {
+        await interaction.reply({ content: `🔒 /blacklist tylko w <#${cfg.blacklistCommandChannelId}>.`, flags: 64 });
+        return;
+      }
+      if (!hasAllowedEntity(interaction.member, cfg.blacklistRoleIds, cfg.blacklistUserIds)) {
+        await interaction.reply({ content: '⛔ Brak uprawnień do /blacklist.', flags: 64 });
+        return;
+      }
+      const target = getUserTarget(interaction);
+      if (!target) {
+        await interaction.reply({ content: '⚠️ Podaj użytkownika albo poprawne ID.', flags: 64 });
+        return;
+      }
+      const reason = interaction.options.getString('powod', true);
+      const blacklistId = generateId('BL');
+      const moderator = `<@${interaction.user.id}>`;
+      cfg.banRecords.unshift({
+        id: blacklistId,
+        type: 'blacklist',
+        userId: target.id,
+        reason,
+        duration: 'Na zawsze',
+        moderator,
+        ts: Date.now()
+      });
+      cfg.banRecords = cfg.banRecords.slice(0, 50);
+      saveConfig();
+      const emb = new EmbedBuilder().setColor(Colors.Red).setTitle('Użytkownik dostał blackliste')
+        .addFields(
+          { name: 'Użytkownik', value: target.mention, inline: true },
+          { name: 'Moderator', value: moderator, inline: true },
+          { name: 'Powód', value: reason, inline: false },
+          { name: 'ID kary', value: blacklistId, inline: true },
+          { name: 'Czas trwania', value: 'Na zawsze', inline: true }
+        );
+      try {
+        const ch = await interaction.client.channels.fetch(cfg.blacklistLogChannelId);
+        await ch.send({ embeds: [emb] });
+        await interaction.reply({ content: `✅ Nadano blacklistę dla ${target.mention} | ID: ${blacklistId}`, flags: 64 });
+      } catch {
+        await interaction.reply({ content: '❌ Nie mogłem wysłać logu blacklisty. Sprawdź kanał logów.', flags: 64 });
+      }
+      return;
+    }
+
+    // usuwanie wiadomości
+    if (interaction.commandName === 'usunwiadomosci') {
+      if (!hasAllowedEntity(interaction.member, cfg.clearMessageRoleIds, cfg.clearMessageUserIds)) {
+        await safeReply(interaction, { content: '⛔ Brak uprawnień do /usunwiadomosci.', flags: 64 });
+        return;
+      }
+      const target = getUserTarget(interaction);
+      if (!target) {
+        await safeReply(interaction, { content: '⚠️ Podaj użytkownika albo poprawne ID.', flags: 64 });
+        return;
+      }
+      const czas = interaction.options.getString('czas', true);
+      const ms = parseDurationMs(czas);
+      if (ms === null) {
+        await safeReply(interaction, { content: '⚠️ Podaj czas np. 30m, 2h, 1d.', flags: 64 });
+        return;
+      }
+      const channel = interaction.channel;
+      if (!isSupportedTextChannel(channel) || !channel?.messages?.fetch) {
+        await safeReply(interaction, { content: '⚠️ Tej komendy można użyć tylko na kanale tekstowym.', flags: 64 });
+        return;
+      }
+      await interaction.deferReply({ flags: 64 });
+      const cutoff = Date.now() - ms;
+      let before;
+      let deleted = 0;
+      let hitLimit = false;
+      for (let batchIndex = 0; batchIndex < 20; batchIndex++) {
+        const fetched = await channel.messages.fetch(before ? { limit: 100, before } : { limit: 100 });
+        if (!fetched.size) break;
+        let shouldStop = false;
+        for (const message of fetched.values()) {
+          if (message.createdTimestamp < cutoff) {
+            shouldStop = true;
+            break;
+          }
+          if (message.author?.id !== target.id) continue;
+          try {
+            await message.delete();
+            deleted++;
+          } catch {}
+        }
+        if (shouldStop || fetched.size < 100) break;
+        before = fetched.last().id;
+        if (batchIndex === 19) hitLimit = true;
+      }
+      const limitNote = hitLimit ? ' Przeskanowałem 2000 ostatnich wiadomości kanału.' : '';
+      await interaction.editReply(`✅ Usunięto ${deleted} wiadomości użytkownika ${target.mention} z ostatnich ${czas}.${limitNote}`);
+      return;
+    }
+
     // ban-dc
     if (interaction.commandName === 'ban-dc') {
       if (!cfg.dcCommandChannelId || !cfg.dcLogChannelId) { await interaction.reply({ content: '⚠️ Ustaw kanały: /bandckanal', flags: 64 }); return; }
@@ -858,7 +1100,10 @@ client.on('interactionCreate', async (interaction) => {
       const pageSize = 15;
       const start = (page - 1) * pageSize;
       const slice = cfg.banRecords.slice(start, start + pageSize);
-      const lines = slice.map(b => `${b.id} [${b.type === 'mute' ? 'MUTE' : 'BAN'}] | <@${b.userId}> | ${b.duration}${b.until ? ' | Do: ' + b.until : ''} | ${b.reason}`);
+      const lines = slice.map(b => {
+        const typeLabel = b.type === 'mute' ? 'MUTE' : b.type === 'blacklist' ? 'BLACKLIST' : 'BAN';
+        return `${b.id} [${typeLabel}] | <@${b.userId}> | ${b.duration}${b.until ? ' | Do: ' + b.until : ''} | ${b.reason}`;
+      });
       const totalPages = Math.max(1, Math.ceil(cfg.banRecords.length / pageSize));
       await interaction.reply({ content: (lines.join('\n') || 'Brak zarejestrowanych kar.') + `\nStrona ${page}/${totalPages}`, flags: 64 });
       return;
@@ -869,7 +1114,7 @@ client.on('interactionCreate', async (interaction) => {
       const id = (interaction.options.getString('id', true) || '').trim().toUpperCase();
       const record = cfg.banRecords.find(r => r.id.toUpperCase() === id);
       if (!record) { await interaction.reply({ content: 'Nie znaleziono kary o podanym ID.', flags: 64 }); return; }
-      const type = record.type === 'mute' ? 'MUTE' : 'BAN';
+      const type = record.type === 'mute' ? 'MUTE' : record.type === 'blacklist' ? 'BLACKLIST' : 'BAN';
       const until = record.until ? ` | Do: ${record.until}` : '';
       await interaction.reply({ content: `**${record.id}** [${type}] | <@${record.userId}> | ${record.duration}${until}\nPowód: ${record.reason}\nModerator: ${record.moderator || 'brak'}`, flags: 64 });
       return;
