@@ -471,7 +471,9 @@ const commands = [
     { name: 'czas', description: 'Zakres czasu, np. 30m, 2h, 1d albo wszystkie', type: 3, required: true },
     { name: 'uzytkownik', description: 'Gracz, którego wiadomości usunąć', type: 6, required: false },
     { name: 'id', description: 'ID gracza, jeśli nie wybierasz z listy', type: 3, required: false },
-    { name: 'kanal', description: 'Kanał, z którego usunąć wiadomości', type: 7, required: false }
+    { name: 'kanal', description: 'Kanał, z którego usunąć wiadomości', type: 7, required: false },
+    { name: 'zakreskanalow', description: 'Wybrany kanał albo wszystkie kanały', type: 3, required: false,
+      choices: [{ name: 'wybrany kanał', value: 'jeden' }, { name: 'wszystkie kanały', value: 'wszystkie' }] }
   ]},
   { name: 'usunwiadomosciperrmison', description: 'Lista lub nadanie permisji do /usunwiadomosci', default_member_permissions: PermissionFlagsBits.Administrator.toString(), options: [
     { name: 'akcja', description: 'list/dodaj/usun', type: 3, required: true,
@@ -1080,50 +1082,83 @@ client.on('interactionCreate', async (interaction) => {
       const target = getUserTarget(interaction);
       const modeLabel = target ? `użytkownika ${target.mention}` : 'całego kanału';
       const selectedChannel = interaction.options.getChannel('kanal');
+      const channelScope = interaction.options.getString('zakreskanalow') || 'jeden';
+      const allChannelsMode = channelScope === 'wszystkie';
+      if (allChannelsMode && !target) {
+        await safeReply(interaction, { content: '⚠️ Tryb `wszystkie kanały` działa tylko po wskazaniu użytkownika albo ID.', flags: 64 });
+        return;
+      }
       const channel = selectedChannel ?? interaction.channel;
-      if (!isSupportedTextChannel(channel) || !channel?.messages?.fetch) {
+      if (!allChannelsMode && (!isSupportedTextChannel(channel) || !channel?.messages?.fetch)) {
         await safeReply(interaction, { content: '⚠️ Tej komendy można użyć tylko na kanale tekstowym.', flags: 64 });
         return;
       }
+      const channels = allChannelsMode
+        ? interaction.guild.channels.cache.filter(ch => isSupportedTextChannel(ch) && ch?.messages?.fetch).map(ch => ch)
+        : [channel];
       const botMember = await interaction.guild.members.fetchMe().catch(() => null);
-      const perms = botMember ? channel.permissionsFor(botMember) : null;
-      if (!perms?.has(PermissionFlagsBits.ViewChannel) || !perms?.has(PermissionFlagsBits.ReadMessageHistory) || !perms?.has(PermissionFlagsBits.ManageMessages)) {
+      if (!botMember) {
+        await safeReply(interaction, { content: '❌ Nie mogłem pobrać uprawnień bota na serwerze.', flags: 64 });
+        return;
+      }
+      const singleChannelPerms = !allChannelsMode ? channel.permissionsFor(botMember) : null;
+      if (!allChannelsMode && (!singleChannelPerms?.has(PermissionFlagsBits.ViewChannel) || !singleChannelPerms?.has(PermissionFlagsBits.ReadMessageHistory) || !singleChannelPerms?.has(PermissionFlagsBits.ManageMessages))) {
         await safeReply(interaction, { content: '❌ Bot nie ma uprawnień `Wyświetlanie kanału`, `Czytanie historii wiadomości` lub `Zarządzanie wiadomościami` na tym kanale.', flags: 64 });
         return;
       }
       await interaction.deferReply({ flags: 64 });
       const cutoff = removeAll ? null : Date.now() - ms;
-      let before;
       let deleted = 0;
       let matched = 0;
       let failed = 0;
       let firstDeleteError = null;
       let hitLimit = false;
-      for (let batchIndex = 0; batchIndex < 20; batchIndex++) {
-        const fetched = await channel.messages.fetch(before ? { limit: 100, before } : { limit: 100 });
-        if (!fetched.size) break;
-        let shouldStop = false;
-        for (const message of fetched.values()) {
-          if (cutoff !== null && message.createdTimestamp < cutoff) {
-            shouldStop = true;
-            break;
-          }
-          if (target && message.author?.id !== target.id) continue;
-          matched++;
-          try {
-            await message.delete();
-            deleted++;
-          } catch (err) {
-            failed++;
-            firstDeleteError = firstDeleteError ?? err;
-          }
+      let scannedChannels = 0;
+      let skippedChannels = 0;
+      for (const currentChannel of channels) {
+        const perms = currentChannel.permissionsFor(botMember);
+        if (!perms?.has(PermissionFlagsBits.ViewChannel) || !perms?.has(PermissionFlagsBits.ReadMessageHistory) || !perms?.has(PermissionFlagsBits.ManageMessages)) {
+          skippedChannels++;
+          continue;
         }
-        if (shouldStop || fetched.size < 100) break;
-        before = fetched.last().id;
-        if (batchIndex === 19) hitLimit = true;
+        scannedChannels++;
+        let before;
+        for (let batchIndex = 0; batchIndex < 20; batchIndex++) {
+          const fetched = await currentChannel.messages.fetch(before ? { limit: 100, before } : { limit: 100 });
+          if (!fetched.size) break;
+          let shouldStop = false;
+          for (const message of fetched.values()) {
+            if (cutoff !== null && message.createdTimestamp < cutoff) {
+              shouldStop = true;
+              break;
+            }
+            if (target && message.author?.id !== target.id) continue;
+            matched++;
+            try {
+              await message.delete();
+              deleted++;
+            } catch (err) {
+              failed++;
+              firstDeleteError = firstDeleteError ?? err;
+            }
+          }
+          if (shouldStop || fetched.size < 100) break;
+          before = fetched.last().id;
+          if (batchIndex === 19) hitLimit = true;
+        }
       }
-      const limitNote = hitLimit ? ' Przeskanowałem 2000 ostatnich wiadomości kanału.' : '';
-      const channelNote = ` na kanale <#${channel.id}>`;
+      if (allChannelsMode && scannedChannels === 0) {
+        await interaction.editReply('❌ Bot nie ma dostępu do żadnego kanału tekstowego z wymaganymi permisjami.');
+        return;
+      }
+      const limitNote = hitLimit
+        ? allChannelsMode
+          ? ' Przeskanowałem do 2000 ostatnich wiadomości na każdy kanał.'
+          : ' Przeskanowałem 2000 ostatnich wiadomości kanału.'
+        : '';
+      const channelNote = allChannelsMode
+        ? ` na ${scannedChannels} kanałach${skippedChannels ? ` (pominięto ${skippedChannels})` : ''}`
+        : ` na kanale <#${channel.id}>`;
       const rangeLabel = removeAll ? 'wszystkie wiadomości' : `wiadomości z ostatnich ${czas}`;
       if (matched === 0) {
         await interaction.editReply(`⚠️ Nie znalazłem ${rangeLabel} dla ${modeLabel}${channelNote}.${limitNote}`);
