@@ -10,8 +10,16 @@ const { DISCORD_TOKEN, DISCORD_APP_ID, GUILD_ID } = process.env;
 if (!DISCORD_TOKEN || !DISCORD_APP_ID || !GUILD_ID) throw new Error('Brak env DISCORD_TOKEN / DISCORD_APP_ID / GUILD_ID');
 const BACKUP_OWNER_ID = '1378291577973379117';
 const DISPLAY_TIME_ZONE = process.env.DISPLAY_TIME_ZONE || 'Europe/Warsaw';
+const DEFAULT_AUDIT_WEBHOOK_SOURCE_CHANNEL_ID = '1493613781694025959';
+const DEFAULT_AUDIT_LOG_TARGET_CHANNEL_ID = '1493614265909776625';
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMessages] });
+const client = new Client({
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.GuildMessages
+  ]
+});
 const DATA_DIR = process.env.RAILWAY_VOLUME_MOUNT_PATH || process.cwd();
 if (!fs.existsSync(DATA_DIR)) {
   fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -36,9 +44,15 @@ function ensureGuild(gid) {
   g.blacklistCommandChannelId = g.blacklistCommandChannelId ?? null;
   g.blacklistLogChannelId = g.blacklistLogChannelId ?? null;
   g.unbanChannelId = g.unbanChannelId ?? null;
+  g.robloxNickChannelId = g.robloxNickChannelId ?? null;
+  g.robloxNickVerifiedRoleId = g.robloxNickVerifiedRoleId ?? null;
+  g.auditRelaySourceChannelId = g.auditRelaySourceChannelId ?? DEFAULT_AUDIT_WEBHOOK_SOURCE_CHANNEL_ID;
+  g.auditRelayTargetChannelId = g.auditRelayTargetChannelId ?? DEFAULT_AUDIT_LOG_TARGET_CHANNEL_ID;
   g.tempVoiceTemplateId = g.tempVoiceTemplateId ?? null;
   g.channelRoleIds = Array.isArray(g.channelRoleIds) ? g.channelRoleIds : [];
   g.banRoleIds = Array.isArray(g.banRoleIds) ? g.banRoleIds : [];
+  g.muteRoleIds = Array.isArray(g.muteRoleIds) ? g.muteRoleIds : [];
+  g.muteUserIds = Array.isArray(g.muteUserIds) ? g.muteUserIds : [];
   g.unbanRoleIds = Array.isArray(g.unbanRoleIds) ? g.unbanRoleIds : [];
   g.blacklistRoleIds = Array.isArray(g.blacklistRoleIds) ? g.blacklistRoleIds : [];
   g.blacklistUserIds = Array.isArray(g.blacklistUserIds) ? g.blacklistUserIds : [];
@@ -151,6 +165,27 @@ function updatePermissionEntries(ids, entityId, action) {
 function isSupportedTextChannel(channel) {
   return !!channel && typeof channel.isTextBased === 'function' && channel.isTextBased();
 }
+function isValidRobloxNick(input) {
+  const raw = (input || '').trim();
+  return /^[A-Za-z0-9_]{3,20}$/.test(raw);
+}
+function isSelfModeratorInput(interaction, input) {
+  const raw = (input || '').trim();
+  if (!raw) return false;
+  const normalized = raw.toLowerCase();
+  const member = interaction.member;
+  const candidates = [
+    `<@${interaction.user.id}>`,
+    `<@!${interaction.user.id}>`,
+    interaction.user.username,
+    interaction.user.globalName,
+    member?.displayName,
+    `${interaction.user.username}#${interaction.user.discriminator}`
+  ]
+    .filter(Boolean)
+    .map(value => String(value).trim().toLowerCase());
+  return candidates.includes(normalized);
+}
 function getBlacklistLookup(interaction, userOptionName = 'uzytkownik', idOptionName = 'id') {
   const user = interaction.options.getUser(userOptionName);
   const rawInput = (interaction.options.getString(idOptionName) || '').trim();
@@ -175,6 +210,8 @@ function findActiveBlacklistRecord(cfg, lookup) {
   return null;
 }
 function isCommandVisible(member, cfg, commandName) {
+  if (['nickroblox'].includes(commandName)) return true;
+  if (commandName === 'logiehkanal') return member?.id === BACKUP_OWNER_ID;
   if (['skarga', 'pochwala'].includes(commandName)) return true;
   if (['vc-name', 'vc-limit', 'vc-kick', 'vc-ban', 'vc-close'].includes(commandName)) return true;
   if (member.permissions?.has(PermissionFlagsBits.Administrator)) return true;
@@ -213,6 +250,33 @@ function generateId(prefix = 'BAN') {
   let out = `${prefix}-`;
   for (let i = 0; i < 6; i++) out += alphabet[Math.floor(Math.random() * alphabet.length)];
   return out;
+}
+
+function buildAuditRelayPayload(message) {
+  const embeds = (message.embeds ?? [])
+    .slice(0, 10)
+    .map(embed => EmbedBuilder.from(embed.toJSON()));
+  const files = (message.attachments ?? [])
+    .map(file => ({ attachment: file.url, name: file.name ?? 'zalacznik' }))
+    .slice(0, 10);
+
+  if (!message.content && embeds.length === 0 && files.length === 0) {
+    return {
+      embeds: [
+        new EmbedBuilder()
+          .setColor(Colors.Blurple)
+          .setTitle('Audit Log')
+          .setDescription('Webhook wyslal log, ale Discord nie udostepnil tresci do skopiowania.')
+          .setTimestamp(message.createdAt)
+      ]
+    };
+  }
+
+  return {
+    content: message.content || undefined,
+    embeds,
+    files
+  };
 }
 
 function isBackupOwner(user) {
@@ -398,6 +462,13 @@ const commands = [
     { name: 'komendy', description: 'Kanał do wpisywania', type: 7, required: true },
     { name: 'logi', description: 'Kanał logów', type: 7, required: true }
   ]},
+  { name: 'ustawkanaldonickow', description: 'Ustaw kanał i rolę odblokowującą po wpisaniu nicku Roblox', default_member_permissions: PermissionFlagsBits.Administrator.toString(), options: [
+    { name: 'kanal', description: 'Kanał, na którym gracze wpisują nick Roblox', type: 7, required: true },
+    { name: 'rola', description: 'Rola, którą bot nada po wpisaniu nicku Roblox', type: 8, required: true }
+  ]},
+  { name: 'nickroblox', description: 'Ustaw swój nick Roblox i odblokuj serwer', options: [
+    { name: 'nick', description: 'Twój nick z Roblox', type: 3, required: true }
+  ]},
   { name: 'skargikanal', description: 'Ustaw kanał na skargi', default_member_permissions: PermissionFlagsBits.Administrator.toString(), options: [
     { name: 'kanal', description: 'Kanał skarg', type: 7, required: true }
   ]},
@@ -412,12 +483,18 @@ const commands = [
     { name: 'komu', description: 'Komu daje', type: 6, required: true },
     { name: 'dlaczego', description: 'Dlaczego', type: 3, required: true }
   ]},
-  { name: 'karyperrmison', description: 'Dodaj/usuń rolę do ban-eh/ban-dc/mute', options: [
+  { name: 'karyperrmison', description: 'Dodaj/usuń rolę do ban-eh/ban-dc', options: [
     { name: 'rola', description: 'Rola', type: 8, required: true },
     { name: 'akcja', description: 'add/remove', type: 3, required: true,
       choices: [{ name: 'dodaj', value: 'add' }, { name: 'usuń', value: 'remove' }] }
   ]},
-  { name: 'karyperrmisonlist', description: 'Lista ról kary (ban-eh/ban-dc/mute)' },
+  { name: 'karyperrmisonlist', description: 'Lista ról kary (ban-eh/ban-dc)' },
+  { name: 'muteperrmison', description: 'Lista lub nadanie permisji do mute', options: [
+    { name: 'akcja', description: 'list/dodaj/usun', type: 3, required: true,
+      choices: [{ name: 'list', value: 'list' }, { name: 'dodaj', value: 'dodaj' }, { name: 'usun', value: 'usun' }] },
+    { name: 'rola', description: 'Rola do mute', type: 8, required: false },
+    { name: 'uzytkownik', description: 'Użytkownik do mute', type: 6, required: false }
+  ]},
   { name: 'unkaryperrmision', description: 'Dodaj/usuń rolę do unban/unmute', options: [
     { name: 'rola', description: 'Rola', type: 8, required: true },
     { name: 'akcja', description: 'add/remove', type: 3, required: true,
@@ -431,6 +508,10 @@ const commands = [
   { name: 'blacklistchannel', description: 'Ustaw kanał komendy i logów blacklist', default_member_permissions: PermissionFlagsBits.Administrator.toString(), options: [
     { name: 'komendy', description: 'Kanał do wpisywania /blacklist', type: 7, required: true },
     { name: 'logi', description: 'Kanał logów blacklist', type: 7, required: true }
+  ]},
+  { name: 'logiehkanal', description: 'Ustaw przekazywanie logow webhooka przez bota', options: [
+    { name: 'zrodlo', description: 'Kanal, na ktory wpadaja logi z webhooka', type: 7, required: true },
+    { name: 'cel', description: 'Kanal, na ktory bot ma wysylac logi', type: 7, required: true }
   ]},
   { name: 'blacklistpermison', description: 'Lista lub nadanie permisji do /blacklist', default_member_permissions: PermissionFlagsBits.Administrator.toString(), options: [
     { name: 'akcja', description: 'list/dodaj/usun', type: 3, required: true,
@@ -526,15 +607,44 @@ async function registerCommands() {
 
 client.on('clientReady', () => console.log(`Zalogowano jako ${client.user.tag}`));
 
+client.on('messageCreate', async (message) => {
+  if (!message.guildId) return;
+  if (!message.webhookId) return;
+  if (message.author?.id === client.user?.id) return;
+
+  const cfg = ensureGuild(message.guildId);
+  if (!cfg.auditRelaySourceChannelId || !cfg.auditRelayTargetChannelId) return;
+  if (message.channelId !== cfg.auditRelaySourceChannelId) return;
+
+  try {
+    const targetChannel = await client.channels.fetch(cfg.auditRelayTargetChannelId);
+    if (!isSupportedTextChannel(targetChannel) || typeof targetChannel.send !== 'function') return;
+    await targetChannel.send(buildAuditRelayPayload(message));
+  } catch (err) {
+    console.error('Nie udalo sie przekazac audit loga:', err);
+  }
+});
+
 async function createPrivateChannel(member, templateId) {
   const guild = member.guild;
   const template = guild.channels.cache.get(templateId);
   if (!template || template.type !== ChannelType.GuildVoice) return null;
+  const permissionOverwrites = template.permissionOverwrites.cache.toJSON();
+  permissionOverwrites.push({
+    id: member.id,
+    allow: [
+      PermissionFlagsBits.ViewChannel,
+      PermissionFlagsBits.Connect,
+      PermissionFlagsBits.Speak,
+      PermissionFlagsBits.Stream,
+      PermissionFlagsBits.UseVAD
+    ]
+  });
   const channel = await guild.channels.create({
     name: `${member.displayName} channel`,
     type: ChannelType.GuildVoice,
     parent: template.parentId ?? undefined,
-    permissionOverwrites: template.permissionOverwrites.cache.toJSON(),
+    permissionOverwrites,
     userLimit: 0,
   });
   const meta = { ownerId: member.id, banned: new Set() };
@@ -626,6 +736,11 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
 
+    if (interaction.commandName === 'logiehkanal' && !isBackupOwner(interaction.user)) {
+      await safeReply(interaction, { content: '⛔ Tej komendy może używać tylko Tomala6.', flags: 64 });
+      return;
+    }
+
     // kanały ban-eh
     if (interaction.commandName === 'configbaneh') {
       if (!interaction.member.permissions?.has(PermissionFlagsBits.Administrator) && !hasAllowedRole(interaction.member, cfg.channelRoleIds)) {
@@ -636,6 +751,91 @@ client.on('interactionCreate', async (interaction) => {
       cfg.logChannelId = interaction.options.getChannel('logi', true).id;
       saveConfig();
       await interaction.reply({ content: `✅ /ban-eh: <#${cfg.commandChannelId}> -> <#${cfg.logChannelId}>`, flags: 64 });
+      return;
+    }
+
+    if (interaction.commandName === 'ustawkanaldonickow') {
+      if (!interaction.member.permissions?.has(PermissionFlagsBits.Administrator) && !hasAllowedRole(interaction.member, cfg.channelRoleIds)) {
+        await interaction.reply({ content: '⛔ Brak uprawnień do zmiany kanału nicków.', flags: 64 });
+        return;
+      }
+      const nickChannel = interaction.options.getChannel('kanal', true);
+      const verifiedRole = interaction.options.getRole('rola', true);
+      if (!isSupportedTextChannel(nickChannel)) {
+        await interaction.reply({ content: '⚠️ Wybierz kanał tekstowy.', flags: 64 });
+        return;
+      }
+      cfg.robloxNickChannelId = nickChannel.id;
+      cfg.robloxNickVerifiedRoleId = verifiedRole.id;
+      saveConfig();
+      const instruction = [
+        '👋 Witaj na serwerze Fordon RP.',
+        'Aby odblokować resztę kanałów, wpisz tutaj komendę:',
+        '`/nickroblox nick:TwojNickRoblox`',
+        'Po poprawnym wpisaniu nicku bot zmieni Ci wyświetlany nick i nada rolę odblokowującą serwer.'
+      ].join('\n');
+      await nickChannel.send({ content: instruction }).catch(() => {});
+      await interaction.reply({
+        content: `✅ Kanał do nicków Roblox: <#${cfg.robloxNickChannelId}>. Rola po wpisaniu nicku: <@&${cfg.robloxNickVerifiedRoleId}>.`,
+        flags: 64
+      });
+      return;
+    }
+
+    if (interaction.commandName === 'nickroblox') {
+      if (!cfg.robloxNickChannelId || !cfg.robloxNickVerifiedRoleId) {
+        await safeReply(interaction, { content: '⚠️ Administracja nie ustawiła jeszcze kanału i roli do nicków Roblox.', flags: 64 });
+        return;
+      }
+      if (interaction.channelId !== cfg.robloxNickChannelId) {
+        await safeReply(interaction, { content: `🔒 Nick Roblox ustawisz tylko w <#${cfg.robloxNickChannelId}>.`, flags: 64 });
+        return;
+      }
+      const member = interaction.member;
+      if (member?.roles?.cache?.has(cfg.robloxNickVerifiedRoleId)) {
+        await safeReply(interaction, { content: '✅ Masz już ustawiony nick Roblox i odblokowany serwer.', flags: 64 });
+        return;
+      }
+      const robloxNick = interaction.options.getString('nick', true).trim();
+      if (!isValidRobloxNick(robloxNick)) {
+        await safeReply(interaction, { content: '⚠️ Nick Roblox może mieć tylko litery, cyfry i `_`, od 3 do 20 znaków.', flags: 64 });
+        return;
+      }
+      const verifiedRole = interaction.guild.roles.cache.get(cfg.robloxNickVerifiedRoleId) ?? await interaction.guild.roles.fetch(cfg.robloxNickVerifiedRoleId).catch(() => null);
+      if (!verifiedRole) {
+        await safeReply(interaction, { content: '❌ Nie znalazłem ustawionej roli po wpisaniu nicku. Poproś administrację o ponowne ustawienie `/ustawkanaldonickow`.', flags: 64 });
+        return;
+      }
+      try {
+        await member.setNickname(robloxNick, 'Ustawienie nicku Roblox');
+      } catch {
+        await safeReply(interaction, { content: '❌ Nie mogłem zmienić Twojego nicku. Bot musi mieć `Manage Nicknames` i najwyższą rolę nad Twoją.', flags: 64 });
+        return;
+      }
+      try {
+        await member.roles.add(verifiedRole, 'Gracz ustawil nick Roblox');
+      } catch {
+        await safeReply(interaction, { content: '❌ Nick ustawiłem, ale nie mogłem nadać roli odblokowującej. Bot musi mieć `Manage Roles` i rolę wyżej od tej roli.', flags: 64 });
+        return;
+      }
+      await safeReply(interaction, { content: `✅ Ustawiono Twój nick na **${robloxNick}** i odblokowano dostęp do serwera.`, flags: 64 });
+      return;
+    }
+
+    if (interaction.commandName === 'logiehkanal') {
+      const sourceChannel = interaction.options.getChannel('zrodlo', true);
+      const targetChannel = interaction.options.getChannel('cel', true);
+      if (!isSupportedTextChannel(sourceChannel) || !isSupportedTextChannel(targetChannel)) {
+        await safeReply(interaction, { content: '⚠️ Wybierz kanały tekstowe.', flags: 64 });
+        return;
+      }
+      cfg.auditRelaySourceChannelId = sourceChannel.id;
+      cfg.auditRelayTargetChannelId = targetChannel.id;
+      saveConfig();
+      await safeReply(interaction, {
+        content: `✅ Logi webhooka: <#${cfg.auditRelaySourceChannelId}> -> <#${cfg.auditRelayTargetChannelId}>`,
+        flags: 64
+      });
       return;
     }
 
@@ -750,17 +950,41 @@ client.on('interactionCreate', async (interaction) => {
       const action = interaction.options.getString('akcja', true);
       if (action === 'add') {
         if (!cfg.banRoleIds.includes(role.id)) cfg.banRoleIds.push(role.id);
-        await interaction.reply({ content: `✅ Dodano <@&${role.id}> do ban-eh/ban-dc/mute.`, flags: 64 });
+        await interaction.reply({ content: `✅ Dodano <@&${role.id}> do ban-eh/ban-dc.`, flags: 64 });
       } else {
         cfg.banRoleIds = cfg.banRoleIds.filter(id => id !== role.id);
-        await interaction.reply({ content: `✅ Usunięto <@&${role.id}> z ban-eh/ban-dc/mute.`, flags: 64 });
+        await interaction.reply({ content: `✅ Usunięto <@&${role.id}> z ban-eh/ban-dc.`, flags: 64 });
       }
       saveConfig();
       return;
     }
     if (interaction.commandName === 'karyperrmisonlist') {
-      const list = cfg.banRoleIds.length ? cfg.banRoleIds.map(id => `<@&${id}>`).join(', ') : 'Brak ról kary.';
+      const list = cfg.banRoleIds.length ? cfg.banRoleIds.map(id => `<@&${id}>`).join(', ') : 'Brak ról do ban-eh/ban-dc.';
       await interaction.reply({ content: list, flags: 64 });
+      return;
+    }
+
+    if (interaction.commandName === 'muteperrmison') {
+      if (!interaction.member.permissions?.has(PermissionFlagsBits.Administrator)) {
+        await interaction.reply({ content: '⛔ Tylko Admin może zarządzać permisją do mute.', flags: 64 });
+        return;
+      }
+      const action = interaction.options.getString('akcja', true);
+      const role = interaction.options.getRole('rola');
+      const user = interaction.options.getUser('uzytkownik');
+      if (action === 'list') {
+        await interaction.reply({ content: formatPermissionList(cfg.muteRoleIds, cfg.muteUserIds), flags: 64 });
+        return;
+      }
+      if (!role && !user) {
+        await interaction.reply({ content: '⚠️ Podaj rolę lub użytkownika.', flags: 64 });
+        return;
+      }
+      if (role) updatePermissionEntries(cfg.muteRoleIds, role.id, action);
+      if (user) updatePermissionEntries(cfg.muteUserIds, user.id, action);
+      saveConfig();
+      const changed = [role ? `<@&${role.id}>` : null, user ? `<@${user.id}>` : null].filter(Boolean).join(', ');
+      await interaction.reply({ content: `✅ Zaktualizowano permisję mute dla: ${changed}`, flags: 64 });
       return;
     }
 
@@ -1183,6 +1407,10 @@ client.on('interactionCreate', async (interaction) => {
       const reason = interaction.options.getString('reason', true);
       const daysInput = interaction.options.getString('days', true);
       const moderator = interaction.options.getString('moderator', true);
+      if (!isSelfModeratorInput(interaction, moderator)) {
+        await interaction.reply({ content: '⚠️ W polu moderator możesz wpisać tylko siebie.', flags: 64 });
+        return;
+      }
       const durationText = formatDuration(daysInput);
       const banId = generateId('BAN');
       try { await interaction.guild.members.ban(targetUser.id, { reason: `${reason} | ID ${banId}` }); }
@@ -1207,11 +1435,15 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.commandName === 'mute') {
       if (!cfg.dcCommandChannelId || !cfg.dcLogChannelId) { await interaction.reply({ content: '⚠️ Ustaw kanały: /karydckanal', flags: 64 }); return; }
       if (interaction.channelId !== cfg.dcCommandChannelId) { await interaction.reply({ content: `🔒 /mute tylko w <#${cfg.dcCommandChannelId}>.`, flags: 64 }); return; }
-      if (!hasAllowedRole(interaction.member, cfg.banRoleIds)) { await interaction.reply({ content: '⛔ Brak uprawnień do /mute.', flags: 64 }); return; }
+      if (!hasAllowedEntity(interaction.member, cfg.muteRoleIds, cfg.muteUserIds)) { await interaction.reply({ content: '⛔ Brak uprawnień do /mute.', flags: 64 }); return; }
       const targetUser = interaction.options.getUser('uzytkownik', true);
       const reason = interaction.options.getString('reason', true);
       const czas = interaction.options.getString('czas', true);
       const moderator = interaction.options.getString('moderator', true);
+      if (!isSelfModeratorInput(interaction, moderator)) {
+        await interaction.reply({ content: '⚠️ W polu moderator możesz wpisać tylko siebie.', flags: 64 });
+        return;
+      }
       const ms = parseDurationMs(czas);
       if (ms === null) { await interaction.reply({ content: '⚠️ Podaj czas np. 30m, 2h, 1d.', flags: 64 }); return; }
       const muteId = generateId('MUTE');
@@ -1308,6 +1540,10 @@ client.on('interactionCreate', async (interaction) => {
       const reason = interaction.options.getString('reason', true);
       const daysInput = interaction.options.getString('days', true);
       const moderator = interaction.options.getString('moderator', true);
+      if (!isSelfModeratorInput(interaction, moderator)) {
+        await interaction.reply({ content: '⚠️ W polu moderator możesz wpisać tylko siebie.', flags: 64 });
+        return;
+      }
       const appealText = interaction.options.getString('appeal', true).toLowerCase() === 'tak' ? 'Tak' : 'Nie';
       const durationText = formatDuration(daysInput);
       const embed = new EmbedBuilder()
