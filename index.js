@@ -631,6 +631,16 @@ async function createPrivateChannel(member, templateId) {
   if (!template || template.type !== ChannelType.GuildVoice) return null;
   const permissionOverwrites = template.permissionOverwrites.cache.toJSON();
   permissionOverwrites.push({
+    id: guild.roles.everyone.id,
+    allow: [
+      PermissionFlagsBits.ViewChannel,
+      PermissionFlagsBits.Connect,
+      PermissionFlagsBits.Speak,
+      PermissionFlagsBits.Stream,
+      PermissionFlagsBits.UseVAD
+    ]
+  });
+  permissionOverwrites.push({
     id: member.id,
     allow: [
       PermissionFlagsBits.ViewChannel,
